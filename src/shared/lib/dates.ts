@@ -46,6 +46,19 @@ export function displayDate(iso: string): string {
   return iso.replace(/-/g, '/');
 }
 
+/**
+ * Date + time for display, always 12-hour with ص/م (owner decision), Gregorian
+ * calendar, Latin digits, Riyadh time — e.g. «07/10/2026، 2:58 م».
+ */
+export function formatDateTime(ms: number, dateStyle: 'short' | 'medium' = 'medium'): string {
+  return new Date(ms).toLocaleString('ar-SA-u-ca-gregory-nu-latn', {
+    timeZone: 'Asia/Riyadh',
+    dateStyle,
+    timeStyle: 'short',
+    hourCycle: 'h12',
+  });
+}
+
 /** Today's date in Asia/Riyadh as 'YYYY-MM-DD'. */
 export function todayRiyadh(now: Date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh' }).format(now);

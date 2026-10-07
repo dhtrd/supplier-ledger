@@ -4,7 +4,7 @@ import { errorMessage, reportError } from '../../../core/errors';
 import { fb } from '../../../core/firebase';
 import { useReady } from '../../../core/session';
 import { ErrorBox, Loading } from '../../../core/Shell';
-import { displayDate } from '../../../shared/lib/dates';
+import { displayDate, formatDateTime } from '../../../shared/lib/dates';
 import { formatAmount } from '../../../shared/lib/money';
 import { Icon } from '../../../shared/ui/Icon';
 import { ENTRY_LABEL, type EntryType } from '../../ledger/domain/types';
@@ -77,13 +77,7 @@ export function AuditPage() {
                   {typeof b.voucherNo === 'number' && ` #${b.voucherNo}`}
                 </strong>
                 <span className="muted num" style={{ fontSize: 12 }}>
-                  {it.atMs
-                    ? new Date(it.atMs).toLocaleString('ar-SA-u-ca-gregory-nu-latn', {
-                        timeZone: 'Asia/Riyadh',
-                        dateStyle: 'short',
-                        timeStyle: 'short',
-                      })
-                    : ''}
+                  {it.atMs ? formatDateTime(it.atMs, 'short') : ''}
                 </span>
               </div>
               <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>

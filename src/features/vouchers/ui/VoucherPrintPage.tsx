@@ -2,7 +2,7 @@ import { useMemo, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useReady } from '../../../core/session';
 import { ErrorBox, Loading } from '../../../core/Shell';
-import { displayDate, todayRiyadh } from '../../../shared/lib/dates';
+import { displayDate, formatDateTime, todayRiyadh } from '../../../shared/lib/dates';
 import { balanceSide, formatAmount, SIDE_LABEL } from '../../../shared/lib/money';
 import { amountInWords } from '../../../shared/lib/tafqit';
 import { Icon } from '../../../shared/ui/Icon';
@@ -161,12 +161,7 @@ export function VoucherPrintPage() {
             </div>
             {sig && sig.signedAtMs > 0 && (
               <div className="muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
-                وُقّع إلكترونياً عبر رابط مؤقت ·{' '}
-                {new Date(sig.signedAtMs).toLocaleString('ar-SA-u-ca-gregory-nu-latn', {
-                  timeZone: 'Asia/Riyadh',
-                  dateStyle: 'medium',
-                  timeStyle: 'short',
-                })}
+                وُقّع إلكترونياً عبر رابط مؤقت · {formatDateTime(sig.signedAtMs)}
               </div>
             )}
           </section>

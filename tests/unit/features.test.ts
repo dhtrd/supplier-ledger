@@ -200,3 +200,13 @@ describe('Dropbox helpers', () => {
     ).toEqual(['2026-09-06']);
   });
 });
+
+describe('time display', () => {
+  it('is always 12-hour with ص/م in Riyadh time', async () => {
+    const { formatDateTime } = await import('../../src/shared/lib/dates');
+    const pm = formatDateTime(Date.UTC(2026, 9, 7, 11, 58)); // 14:58 Riyadh
+    expect(pm).toMatch(/2:58\s*م/);
+    expect(pm).not.toMatch(/14:58/);
+    expect(formatDateTime(Date.UTC(2026, 9, 7, 6, 5), 'short')).toMatch(/9:05\s*ص/);
+  });
+});

@@ -1,3 +1,4 @@
+import { formatDateTime } from '../../../shared/lib/dates';
 import { useEffect, useState } from 'react';
 import { errorMessage, reportError } from '../../../core/errors';
 import { fb } from '../../../core/firebase';
@@ -13,12 +14,7 @@ import {
 } from '../data/backupRepo';
 import { backupFileName } from '../domain/snapshot';
 
-const when = (ms: number) =>
-  new Date(ms).toLocaleString('ar-SA-u-ca-gregory-nu-latn', {
-    timeZone: 'Asia/Riyadh',
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
+const when = (ms: number) => formatDateTime(ms);
 
 /** Owner & admin: request a Dropbox backup now, or download an encrypted copy. */
 export function BackupNow() {

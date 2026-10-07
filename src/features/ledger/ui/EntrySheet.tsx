@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { errorMessage, reportError } from '../../../core/errors';
 import { fb } from '../../../core/firebase';
 import { useReady } from '../../../core/session';
-import { displayDate } from '../../../shared/lib/dates';
+import { displayDate, formatDateTime } from '../../../shared/lib/dates';
 import { balanceSide, formatAmount, SIDE_LABEL } from '../../../shared/lib/money';
 import { toWhatsAppNumber, whatsAppLink } from '../../../shared/lib/phone';
 import { amountInWords } from '../../../shared/lib/tafqit';
@@ -212,8 +212,7 @@ export function EntrySheet({
           {e.signature ? (
             <div className="banner banner-ok">
               ✓ وقّعه {e.signature.name}
-              {e.signature.signedAtMs > 0 &&
-                ` في ${new Date(e.signature.signedAtMs).toLocaleString('ar-SA-u-ca-gregory-nu-latn', { timeZone: 'Asia/Riyadh', dateStyle: 'medium', timeStyle: 'short' })}`}
+              {e.signature.signedAtMs > 0 && ` في ${formatDateTime(e.signature.signedAtMs)}`}
             </div>
           ) : signState.kind === 'signed' ? (
             <div className="banner banner-ok">✓ وُقّع — جارٍ حفظ التوقيع في السند…</div>

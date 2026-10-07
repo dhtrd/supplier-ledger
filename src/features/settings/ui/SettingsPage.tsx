@@ -1,3 +1,4 @@
+import { formatDateTime } from '../../../shared/lib/dates';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { errorMessage, reportError } from '../../../core/errors';
@@ -296,7 +297,7 @@ function OwnerSettings() {
             <div className="row-between">
               <span style={{ fontWeight: 600 }}>
                 {meta.lastBackupMs
-                  ? `آخر نسخة: ${new Date(meta.lastBackupMs).toLocaleString('ar-SA-u-ca-gregory-nu-latn', { timeZone: 'Asia/Riyadh', dateStyle: 'medium', timeStyle: 'short' })}`
+                  ? `آخر نسخة: ${formatDateTime(meta.lastBackupMs)}`
                   : 'لا توجد نسخة بعد'}
               </span>
               <span
