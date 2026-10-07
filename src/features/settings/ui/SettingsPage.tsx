@@ -7,6 +7,7 @@ import { logout, useReady } from '../../../core/session';
 import { useToast } from '../../../shared/ui/Toast';
 import { can } from '../../users/domain/types';
 import { BackupNow } from '../../backup/ui/BackupNow';
+import { QuickUnlockSettings } from '../../quickUnlock/ui/QuickUnlockSettings';
 import { getBackupMeta, saveSettings, type BackupMeta } from '../data/settingsRepo';
 import {
   ageLabel,
@@ -43,6 +44,7 @@ export function SettingsPage() {
       </header>
       <div className="pad stack" style={{ maxWidth: 640, gap: 22 }}>
         {isOwner && <OwnerSettings />}
+        <QuickUnlockSettings />
         {can.backupNow(profile.role) && <BackupNow />}
         {can.viewAudit(profile.role) && (
           <Link to="/audit" className="btn" style={{ justifyContent: 'space-between' }}>

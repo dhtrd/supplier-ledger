@@ -6,7 +6,9 @@ import { StatementPage } from '../features/ledger/ui/StatementPage';
 import { SignPage } from '../features/signing/ui/SignPage';
 import { ToastProvider } from '../shared/ui/Toast';
 import { firebase } from './firebase';
-import { logout, SessionProvider, useSession } from './session';
+import { logout, SessionProvider, useSession, type ReadySession } from './session';
+import { LockScreen } from '../features/quickUnlock/ui/LockScreen';
+import { useIdleLock } from '../features/quickUnlock/ui/useIdleLock';
 import { IdleGuard } from './IdleGuard';
 import { Loading, Shell } from './Shell';
 
@@ -96,13 +98,24 @@ function Private() {
       <Blocked title="الحساب موقوف" text="أوقفت الإدارة هذا الحساب. راجع المالك أو الإدارة." />
     );
 
+  // Quick-unlock lock: nothing of the app is mounted (and the rules refuse
+  // its data) until the PIN / fingerprint / a fresh sign-in unlocks.
+  if (s.status === 'screenLocked') return <LockScreen session={s} />;
+
   if (s.status !== 'ready') return null; // unreachable; narrows the type
 
+  return <SignedIn s={s} />;
+}
+
+function SignedIn({ s }: { s: ReadySession }) {
+  const idle = useIdleLock(s);
   return (
     <IdleGuard
       idleMinutes={s.settings.idleMinutes}
       countdownSeconds={s.settings.idleCountdownSeconds}
-      onExpire={() => void logout()}
+      mode={idle.mode}
+      onExpire={idle.onExpire}
+      onActivity={idle.onActivity}
     >
       <Suspense fallback={<Loading />}>
         <Routes>

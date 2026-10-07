@@ -6,15 +6,27 @@ import type { UserProfile } from '../features/users/domain/types';
 import { watchProfile } from '../features/users/data/usersRepo';
 import { clearOwnFailures, getFailures } from '../features/auth/data/lockoutRepo';
 import { isLocked } from '../features/auth/domain/lockout';
+import { unlockAfterLogin, watchScreenLock } from '../features/quickUnlock/data/screenLockRepo';
+import { deviceId } from '../features/quickUnlock/data/device';
+import type { ScreenLock } from '../features/quickUnlock/domain/presence';
 import { errorMessage, reportError } from './errors';
 import { fb } from './firebase';
+
+interface SignedInData {
+  user: User;
+  profile: UserProfile;
+  settings: AppSettings;
+  screen: ScreenLock;
+}
 
 export type SessionState =
   | { status: 'loading' }
   | { status: 'signedOut' }
   | { status: 'error'; message: string }
   | { status: 'noProfile' | 'inactive' | 'lockedOut'; user: User }
-  | { status: 'ready'; user: User; profile: UserProfile; settings: AppSettings };
+  | ({ status: 'ready' } & SignedInData)
+  /** Quick-unlock lock: the rules refuse business data until unlocked. */
+  | ({ status: 'screenLocked' } & SignedInData);
 
 const Ctx = createContext<SessionState>({ status: 'loading' });
 
@@ -25,10 +37,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const { auth, db } = fb();
     let stopProfile: (() => void) | undefined;
     let stopSettings: (() => void) | undefined;
+    let stopScreen: (() => void) | undefined;
     const stopInner = () => {
       stopProfile?.();
       stopSettings?.();
-      stopProfile = stopSettings = undefined;
+      stopScreen?.();
+      stopProfile = stopSettings = stopScreen = undefined;
     };
     const fail = (where: string) => (e: unknown) => {
       reportError(where, e);
@@ -54,14 +68,37 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         return fail('lockout')(e);
       }
       if (gen !== generation) return;
+      // Time of the last password sign-in: a screen lock set before it is
+      // lifted automatically (the rules check the same thing).
+      let signedInAtMs = 0;
+      try {
+        signedInAtMs = Date.parse((await user.getIdTokenResult()).authTime) || 0;
+      } catch (e) {
+        reportError('auth-time', e); // only disables the automatic unlock
+      }
+      if (gen !== generation) return;
       let profile: UserProfile | null | undefined;
       let settings: AppSettings | undefined;
+      let screen: ScreenLock | undefined;
+      let autoUnlockTried = false;
       const emit = () => {
         if (profile === undefined) return;
         if (profile === null) return setState({ status: 'noProfile', user });
         if (!profile.active) return setState({ status: 'inactive', user });
-        if (!settings) return;
-        setState({ status: 'ready', user, profile, settings });
+        if (!settings || !screen) return;
+        if (screen.locked && signedInAtMs > screen.atMs && !autoUnlockTried) {
+          autoUnlockTried = true;
+          // Signed in again with the password after the lock → lift it. The
+          // snapshot that follows re-emits; on failure the lock screen shows.
+          unlockAfterLogin(db, user.uid, deviceId()).catch((e) => reportError('auto-unlock', e));
+        }
+        setState({
+          status: screen.locked ? 'screenLocked' : 'ready',
+          user,
+          profile,
+          settings,
+          screen,
+        });
       };
       stopProfile = watchProfile(
         db,
@@ -69,6 +106,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         (p) => {
           profile = p;
           // Settings are readable only by active users: start once confirmed.
+          if (p?.active && !stopScreen)
+            stopScreen = watchScreenLock(
+              db,
+              user.uid,
+              (l) => {
+                screen = l;
+                emit();
+              },
+              fail('screen-lock'),
+            );
           if (p?.active && !stopSettings) {
             stopSettings = watchSettings(
               db,
@@ -100,7 +147,9 @@ export function useSession(): SessionState {
 }
 
 /** For screens rendered only inside the signed-in shell. */
-export function useReady(): Extract<SessionState, { status: 'ready' }> {
+export type ReadySession = Extract<SessionState, { status: 'ready' }>;
+
+export function useReady(): ReadySession {
   const s = useSession();
   if (s.status !== 'ready') throw new Error('useReady outside a ready session');
   return s;

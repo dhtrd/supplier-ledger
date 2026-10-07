@@ -636,6 +636,248 @@ textarea.input {
   color: var(--muted);
 }
 
+/* ---------- idle countdown «ع٤ انطفاء بالحبر» ---------- */
+.idle-fade {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  border: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  color: var(--paper);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  transition: background-color 0.2s linear;
+}
+.idle-fade-num {
+  font: 300 clamp(88px, 22vw, 160px) / 1 var(--sans);
+}
+.idle-fade-hint {
+  font-size: 13px;
+  opacity: 0.8;
+  margin-top: 18px;
+}
+
+/* ---------- lock screen «د» (phone) and «ط» (wide) ---------- */
+.lock-ink {
+  min-height: 100dvh;
+  background: var(--ink);
+  color: var(--paper);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: max(34px, env(safe-area-inset-top)) 20px max(22px, env(safe-area-inset-bottom));
+  text-align: center;
+}
+.lock-clock-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.lock-clock {
+  font: 300 54px / 1 var(--sans);
+  letter-spacing: 1px;
+}
+.lock-clock.big {
+  font-size: 72px;
+}
+.lock-clock small {
+  font-size: 0.42em;
+  font-weight: 500;
+}
+.lock-date {
+  font-size: 13px;
+  opacity: 0.75;
+}
+.lock-name {
+  margin-top: 10px;
+  font: 700 20px var(--serif);
+}
+.lock-dots {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  direction: ltr;
+}
+.lock-dots span {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+}
+.lock-dots span.on {
+  background: currentColor;
+}
+.lock-dots.shake {
+  animation: lock-shake 0.35s;
+}
+@keyframes lock-shake {
+  25% {
+    transform: translateX(-6px);
+  }
+  75% {
+    transform: translateX(6px);
+  }
+}
+.lock-msg {
+  min-height: 22px;
+  font-size: 13px;
+  opacity: 0.85;
+  max-width: 34ch;
+  line-height: 1.6;
+}
+.lock-ink .lock-msg.err {
+  color: #f0a58f;
+  opacity: 1;
+}
+.lock-pad {
+  display: grid;
+  direction: ltr;
+}
+.lock-pad.ink {
+  margin-top: auto;
+  grid-template-columns: repeat(3, 68px);
+  gap: 14px 24px;
+  justify-content: center;
+}
+.lock-pad.ink button {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(244, 241, 234, 0.35);
+  background: transparent;
+  color: var(--paper);
+  font: 500 26px / 1 var(--sans);
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.lock-pad.ink button:active:not(:disabled) {
+  background: rgba(244, 241, 234, 0.15);
+}
+.lock-pad.ink button.plain {
+  border-color: transparent;
+  font-size: 14px;
+}
+.lock-pad.ink button:focus-visible {
+  outline: 2.5px solid #8fd6bd;
+  outline-offset: 2px;
+}
+.lock-pad button:disabled {
+  opacity: 0.5;
+}
+.lock-link {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: 0.8;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  font: inherit;
+  font-size: 14px;
+  min-height: 44px;
+}
+.lock-wide {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: 5fr 6fr;
+  background: var(--paper);
+}
+.lock-side {
+  background: var(--ink);
+  color: var(--paper);
+  padding: 40px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.lock-brand {
+  font-size: 14px;
+  opacity: 0.75;
+}
+.lock-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 40px clamp(24px, 5vw, 64px);
+  text-align: center;
+}
+.lock-who {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.lock-who h1 {
+  margin: 0;
+  font: 700 28px var(--serif);
+}
+.lock-avatar {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--fill);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 30px var(--serif);
+}
+.lock-wide .lock-msg.err {
+  color: var(--alayh);
+  opacity: 1;
+}
+.lock-pad.paper {
+  width: 100%;
+  max-width: 320px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.lock-pad.paper button {
+  min-height: 54px;
+  border-radius: 12px;
+  border: 0;
+  background: var(--white);
+  color: var(--ink);
+  font: 600 22px / 1 var(--sans);
+  font-variant-numeric: tabular-nums;
+}
+.lock-pad.paper button.plain {
+  background: transparent;
+  font-size: 14px;
+  color: var(--muted);
+}
+.lock-pad.paper button:focus-visible {
+  outline: 2.5px solid var(--lah);
+  outline-offset: 2px;
+}
+.lock-actions {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 10px;
+  width: 100%;
+  max-width: 320px;
+}
+.btn-go-outline {
+  border-color: var(--lah);
+  color: var(--lah);
+}
+.lock-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /* ---------- desktop ---------- */
 @media (min-width: 900px) {
   :root {

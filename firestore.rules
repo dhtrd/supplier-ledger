@@ -20,16 +20,30 @@ service cloud.firestore {
     // 5 failed sign-in / PIN attempts lock the account for EVERY role (owner
     // included) until the owner — or, for the owner, the Firebase console —
     // resets the counter.
+    function lockoutPath() { return /databases/$(database)/documents/lockouts/$(emailKey()); }
     function lockedOut() {
-      return exists(/databases/$(database)/documents/lockouts/$(emailKey()))
-        && get(/databases/$(database)/documents/lockouts/$(emailKey())).data.fails >= 5;
+      return exists(lockoutPath()) && get(lockoutPath()).data.fails >= 5;
     }
-    function isActive() {
+    // Exactly one failure is added to the caller's counter in this batch.
+    function failureCounted() {
+      return getAfter(lockoutPath()).data.lastFailAt == request.time
+        && ((exists(lockoutPath()) && getAfter(lockoutPath()).data.fails == get(lockoutPath()).data.fails + 1)
+            || (!exists(lockoutPath()) && getAfter(lockoutPath()).data.fails == 1));
+    }
+    function userActive() {
       return signedIn()
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && userDoc().data.active == true
-        && !lockedOut();
+        && userDoc().data.active == true;
     }
+    // Quick unlock: while the user's screen is locked the rules refuse every
+    // read and write of business data (see /screenLocks below).
+    function screenPath(uid) { return /databases/$(database)/documents/screenLocks/$(uid); }
+    function screenLocked() {
+      return exists(screenPath(request.auth.uid)) && get(screenPath(request.auth.uid)).data.locked == true;
+    }
+    // Signed in, enabled, not locked out — the screen may still be locked.
+    function isActiveRaw() { return userActive() && !lockedOut(); }
+    function isActive() { return isActiveRaw() && !screenLocked(); }
     function myRole() { return userDoc().data.role; }
     function isOwner() { return isActive() && myRole() == 'owner'; }
     function isManager() { return isActive() && myRole() in ['owner', 'admin']; }
@@ -92,7 +106,7 @@ service cloud.firestore {
 
     // ---------- settings (owner only) ---------------------------------------
     match /settings/app {
-      allow get: if isActive();
+      allow get: if isActiveRaw();
       allow update: if isOwner()
         && changed().hasOnly(['linkMinutes', 'payerName', 'roleLabels', 'idleMinutes',
                               'idleCountdownSeconds', 'updatedAt', 'updatedBy'])
@@ -135,6 +149,12 @@ service cloud.firestore {
       // A successful sign-in clears its own counter (only while not locked).
       allow update: if signedIn() && key == emailKey() && resource.data.fails < 5
         && changed().hasOnly(['fails']) && request.resource.data.fails == 0;
+      // Reset by the user's own correct PIN in the unlock batch (the
+      // /screenLocks rule checks the PIN; this one checks it is that batch).
+      allow update: if signedIn() && key == emailKey()
+        && changed().hasOnly(['fails']) && request.resource.data.fails == 0
+        && get(screenPath(request.auth.uid)).data.locked == true
+        && getAfter(screenPath(request.auth.uid)).data.locked == false;
       // The owner unlocks anyone else.
       allow update: if isOwner()
         && changed().hasOnly(['fails', 'unlockedAt', 'unlockedBy'])
@@ -142,6 +162,115 @@ service cloud.firestore {
         && request.resource.data.unlockedAt == request.time
         && request.resource.data.unlockedBy == request.auth.uid;
       allow delete: if false;
+    }
+
+    // ---------- quick unlock (server-enforced screen lock) ------------------
+    // proof = sha256("sl-pin:v1:" + uid + ":" + pin) computed in the app;
+    // pins/{uid}.check = sha256(proof). Nobody can read pins or attempts, so the
+    // 6-digit PIN cannot be brute-forced offline; online, every guess must first
+    // be committed together with +1 on the 5-attempt counter, and only then can
+    // a following write unlock with it (commit → reveal), so no guess is free.
+    match /pins/{uid} {
+      function recentLogin() {
+        return request.time < timestamp.value(request.auth.token.auth_time * 1000) + duration.value(5, 'm');
+      }
+      allow read: if false;
+      // Set / change the PIN: only within 5 minutes of entering the password.
+      allow create, update: if isActive() && uid == request.auth.uid && recentLogin()
+        && request.resource.data.keys().hasOnly(['check', 'updatedAt'])
+        && request.resource.data.check is string
+        && request.resource.data.check.matches('^[0-9a-f]{64}$')
+        && request.resource.data.updatedAt == request.time
+        && getAfter(screenPath(uid)).data.pinSet == true
+        && getAfter(screenPath(uid)).data.pinAt == request.time;
+      allow delete: if isActive() && uid == request.auth.uid
+        && getAfter(screenPath(uid)).data.pinSet == false;
+    }
+
+    match /unlockAttempts/{uid} {
+      allow read: if false;
+      // Commit a guess: only while locked, and it costs one failed attempt.
+      allow create, update: if userActive() && uid == request.auth.uid
+        && !lockedOut()
+        && get(screenPath(uid)).data.locked == true
+        && request.resource.data.keys().hasOnly(['proof', 'at'])
+        && request.resource.data.proof is string
+        && request.resource.data.proof.matches('^[0-9a-f]{64}$')
+        && request.resource.data.at == request.time
+        && failureCounted();
+      // Removed in the same batch that unlocks.
+      allow delete: if signedIn() && uid == request.auth.uid
+        && get(screenPath(uid)).data.locked == true
+        && getAfter(screenPath(uid)).data.locked == false;
+    }
+
+    match /screenLocks/{uid} {
+      function mine() { return signedIn() && uid == request.auth.uid; }
+      function pinsPath() { return /databases/$(database)/documents/pins/$(uid); }
+      function attemptPath() { return /databases/$(database)/documents/unlockAttempts/$(uid); }
+      function activity(d) {
+        return d.activeAt == request.time
+          && d.activeBy is string && d.activeBy.size() >= 8 && d.activeBy.size() <= 64;
+      }
+      // pinVer: random id of the current PIN, so a fingerprint key made for an
+      // older PIN is recognised as stale on every device.
+      function pinFlag(d) {
+        return d.pinSet is bool && d.pinSet == existsAfter(pinsPath()) && d.pinAt == request.time
+          && d.pinVer is string && d.pinVer.size() <= 64
+          && (d.pinSet == false || d.pinVer.size() >= 16);
+      }
+      function unlocking() {
+        return resource.data.locked == true
+          && changed().hasOnly(['locked', 'at', 'activeAt', 'activeBy'])
+          && request.resource.data.locked == false
+          && request.resource.data.at == request.time
+          && activity(request.resource.data);
+      }
+      // The committed guess is newer than the lock and matches the PIN.
+      function committedGuessOk() {
+        return exists(attemptPath())
+          && get(attemptPath()).data.at > resource.data.at
+          && hashing.sha256(get(attemptPath()).data.proof).toHexString().lower()
+             == get(pinsPath()).data.check
+          && !existsAfter(attemptPath());
+      }
+      // A correct guess may be the 5th: the counter it raised is reset with it.
+      function counterReset() {
+        return !exists(lockoutPath())
+          || ((get(lockoutPath()).data.fails < 5
+               || get(lockoutPath()).data.lastFailAt == get(attemptPath()).data.at)
+              && getAfter(lockoutPath()).data.fails == 0);
+      }
+
+      allow get: if mine();
+      allow list, delete: if false;
+      allow create: if isActive() && mine()
+        && request.resource.data.keys().hasOnly(['locked', 'at', 'activeAt', 'activeBy', 'pinSet', 'pinAt', 'pinVer'])
+        && request.resource.data.locked == false
+        && request.resource.data.at == request.time
+        && activity(request.resource.data)
+        && pinFlag(request.resource.data);
+      // «Last active» heartbeat (lets another device of the same user decide
+      // not to lock the account while this one is in use).
+      allow update: if isActive() && mine()
+        && changed().hasOnly(['activeAt', 'activeBy'])
+        && activity(request.resource.data);
+      // PIN set / changed / removed (same batch as /pins).
+      allow update: if isActive() && mine()
+        && changed().hasOnly(['pinSet', 'pinAt', 'pinVer'])
+        && pinFlag(request.resource.data);
+      // Lock: only with a PIN to come back with.
+      allow update: if isActive() && mine()
+        && resource.data.pinSet == true && exists(pinsPath())
+        && changed().hasOnly(['locked', 'at'])
+        && request.resource.data.locked == true
+        && request.resource.data.at == request.time;
+      // Unlock with the PIN / fingerprint (both reveal the committed proof).
+      allow update: if mine() && userActive() && unlocking()
+        && committedGuessOk() && counterReset();
+      // Unlock by signing in again with the password after the lock.
+      allow update: if mine() && isActiveRaw() && unlocking()
+        && request.auth.token.auth_time * 1000 > resource.data.at.toMillis();
     }
 
     // ---------- on-demand backup requests (picked up by GitHub Actions) ------

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Sheet } from '../shared/ui/Sheet';
 import { idlePhase } from './idle';
 
 const KEY = 'sl:lastActivity';
@@ -21,20 +20,27 @@ function writeShared(ms: number): void {
 }
 
 /**
- * After `idleMinutes` without activity (in any tab) a countdown of
- * `countdownSeconds` is shown; when it ends `onExpire` runs (sign-out, or
- * the quick-unlock screen once enabled). Both durations come from the owner's
- * settings.
+ * After `idleMinutes` without activity (in any tab) the screen fades to the
+ * lock-screen ink over `countdownSeconds` (approved design «ع٤»); any touch or
+ * key continues working. When the fade completes `onExpire` runs (lock, or
+ * sign-out without quick unlock). Times are measured on the real clock, so a
+ * sleeping device or a background tab still counts the full period.
  */
 export function IdleGuard({
   idleMinutes,
   countdownSeconds,
+  mode,
   onExpire,
+  onActivity,
   children,
 }: {
   idleMinutes: number;
   countdownSeconds: number;
+  /** What happens at the end — only changes the wording. */
+  mode: 'lock' | 'logout';
   onExpire: () => void;
+  /** Called on user activity (throttled by the caller). */
+  onActivity?: () => void;
   children: ReactNode;
 }) {
   const last = useRef(0);
@@ -42,26 +48,32 @@ export function IdleGuard({
   const expired = useRef(false);
   const [left, setLeft] = useState<number | null>(null);
   const expireRef = useRef(onExpire);
+  const activityRef = useRef(onActivity);
   useEffect(() => {
     expireRef.current = onExpire;
-  }, [onExpire]);
+    activityRef.current = onActivity;
+  }, [onExpire, onActivity]);
 
-  const touch = useCallback(() => {
-    if (warning.current) return; // only «متابعة» dismisses the warning
-    const now = Date.now();
-    last.current = now;
-    // Throttle cross-tab writes to once every 5 s.
-    if (now - readShared() > 5000) writeShared(now);
-  }, []);
-
-  const keepWorking = () => {
+  const keepWorking = useCallback(() => {
     warning.current = false;
     setLeft(null);
     last.current = Date.now();
     writeShared(last.current);
-  };
+    activityRef.current?.();
+  }, []);
+
+  const touch = useCallback(() => {
+    if (expired.current) return;
+    if (warning.current) return keepWorking(); // any touch/key continues
+    const now = Date.now();
+    last.current = now;
+    // Throttle cross-tab writes to once every 5 s.
+    if (now - readShared() > 5000) writeShared(now);
+    activityRef.current?.();
+  }, [keepWorking]);
 
   useEffect(() => {
+    expired.current = false;
     last.current = Date.now();
     writeShared(last.current);
     for (const e of EVENTS) window.addEventListener(e, touch, { passive: true });
@@ -79,14 +91,20 @@ export function IdleGuard({
       }
       if (phase.kind === 'warning') {
         warning.current = true;
-        setLeft(phase.secondsLeft);
+        // Fractional seconds drive the fade smoothly.
+        const exact = Math.max(
+          0,
+          (lastSeen + idleMinutes * 60_000 + countdownSeconds * 1000 - Date.now()) / 1000,
+        );
+        setLeft(exact);
         return;
       }
       expired.current = true;
+      warning.current = false;
       setLeft(null);
       expireRef.current();
     };
-    const t = setInterval(tick, 1000);
+    const t = setInterval(tick, 200);
     // Timers are throttled in background tabs: re-check on return.
     document.addEventListener('visibilitychange', tick);
     return () => {
@@ -96,35 +114,28 @@ export function IdleGuard({
     };
   }, [idleMinutes, countdownSeconds, touch]);
 
+  const progress = left === null ? 0 : 1 - left / countdownSeconds;
   return (
     <>
       {children}
       {left !== null && (
-        <Sheet title="هل ما زلت هنا؟" onClose={keepWorking}>
-          <p style={{ margin: 0, lineHeight: 1.8 }}>
-            لم يُستخدم البرنامج منذ {idleMinutes} دقيقة. سيُسجَّل خروجك تلقائياً خلال{' '}
-            <strong className="num" aria-live="assertive">
-              {left}
-            </strong>{' '}
-            ثانية.
-          </p>
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10 }}>
-            <button type="button" className="btn btn-primary" onClick={keepWorking}>
-              متابعة العمل
-            </button>
-            <button
-              type="button"
-              className="btn btn-danger"
-              onClick={() => {
-                expired.current = true;
-                setLeft(null);
-                expireRef.current();
-              }}
-            >
-              خروج الآن
-            </button>
-          </div>
-        </Sheet>
+        <button
+          type="button"
+          className="idle-fade"
+          style={{ backgroundColor: `rgba(27, 42, 58, ${(0.35 + 0.65 * progress).toFixed(3)})` }}
+          onClick={keepWorking}
+          aria-label="متابعة العمل"
+          aria-describedby="idle-fade-text"
+        >
+          <span className="idle-fade-num num" aria-hidden="true">
+            {Math.max(1, Math.ceil(left))}
+          </span>
+          <span id="idle-fade-text" role="alert">
+            {mode === 'lock' ? 'سيُقفل البرنامج' : 'سيُسجَّل خروجك'} لعدم الاستخدام منذ{' '}
+            {idleMinutes} دقيقة
+          </span>
+          <span className="idle-fade-hint">المس أي مكان أو اضغط أي زر للمتابعة</span>
+        </button>
       )}
     </>
   );

@@ -18,3 +18,11 @@ export function isLocked(fails: number): boolean {
 export function remainingAttempts(fails: number): number {
   return Math.max(0, MAX_FAILED_ATTEMPTS - fails);
 }
+
+/** Firebase Auth error codes that mean «wrong email or password». */
+export const WRONG_PASSWORD_CODES: ReadonlySet<string> = new Set([
+  'auth/invalid-credential',
+  'auth/wrong-password',
+  'auth/user-not-found',
+  'auth/invalid-login-credentials',
+]);

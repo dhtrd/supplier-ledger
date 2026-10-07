@@ -3,14 +3,7 @@ import { useState, type FormEvent } from 'react';
 import { errorMessage, reportError } from '../../../core/errors';
 import { fb } from '../../../core/firebase';
 import { recordFailure } from '../data/lockoutRepo';
-import { MAX_FAILED_ATTEMPTS } from '../domain/lockout';
-
-const WRONG_PASSWORD = new Set([
-  'auth/invalid-credential',
-  'auth/wrong-password',
-  'auth/user-not-found',
-  'auth/invalid-login-credentials',
-]);
+import { MAX_FAILED_ATTEMPTS, WRONG_PASSWORD_CODES as WRONG_PASSWORD } from '../domain/lockout';
 
 export function LoginPage() {
   const [email, setEmail] = useState('');

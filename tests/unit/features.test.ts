@@ -223,3 +223,54 @@ describe('backup file names (12-hour, Riyadh)', () => {
     );
   });
 });
+
+describe('quick unlock domain', () => {
+  it('PIN: exactly 6 digits; Arabic digits accepted', async () => {
+    const { validatePin, normalizeDigits } =
+      await import('../../src/features/quickUnlock/domain/pin');
+    expect(validatePin('48291')).not.toBeNull();
+    expect(validatePin('4829155')).not.toBeNull();
+    expect(validatePin('48a915')).not.toBeNull();
+    expect(validatePin('482915')).toBeNull();
+    expect(validatePin('٤٨٢٩١٥')).toBeNull();
+    expect(normalizeDigits('۱۲۳٤٥٦')).toBe('123456');
+  });
+  it('proof depends on the user and matches the rules formula', async () => {
+    const { pinProof, proofCheck } = await import('../../src/features/quickUnlock/domain/pin');
+    const a = await pinProof('u1', '482915');
+    expect(a).toBe(createHash('sha256').update('sl-pin:v1:u1:482915').digest('hex'));
+    expect(await pinProof('u1', '٤٨٢٩١٥')).toBe(a);
+    expect(await pinProof('u2', '482915')).not.toBe(a);
+    expect(await proofCheck(a)).toBe(createHash('sha256').update(a).digest('hex'));
+  });
+  it('idle outcome: logout without PIN, spare the account if another device is in use', async () => {
+    const { idleOutcome, heartbeatEveryMs, NO_LOCK } =
+      await import('../../src/features/quickUnlock/domain/presence');
+    const now = 10 * 3_600_000;
+    const withPin = { ...NO_LOCK, pinSet: true };
+    expect(idleOutcome(NO_LOCK, 'me', now, 30)).toBe('logout');
+    expect(idleOutcome(withPin, 'me', now, 30)).toBe('lock');
+    expect(idleOutcome({ ...withPin, activeBy: 'me', activeAtMs: now - 1000 }, 'me', now, 30)).toBe(
+      'lock',
+    );
+    expect(
+      idleOutcome({ ...withPin, activeBy: 'phone', activeAtMs: now - 10 * 60_000 }, 'me', now, 30),
+    ).toBe('otherDeviceActive');
+    expect(
+      idleOutcome({ ...withPin, activeBy: 'phone', activeAtMs: now - 31 * 60_000 }, 'me', now, 30),
+    ).toBe('lock');
+    expect(heartbeatEveryMs(30)).toBe(5 * 60_000);
+    expect(heartbeatEveryMs(2)).toBe(60_000);
+    expect(heartbeatEveryMs(1)).toBe(30_000);
+  });
+});
+
+describe('lock-screen clock', () => {
+  it('shows Riyadh time in 12-hour form with the weekday', async () => {
+    const { clock12, longDay } = await import('../../src/shared/lib/dates');
+    expect(clock12(Date.UTC(2026, 9, 7, 12, 2))).toEqual({ time: '3:02', period: 'م' });
+    expect(clock12(Date.UTC(2026, 9, 7, 21, 0))).toEqual({ time: '12:00', period: 'ص' });
+    expect(longDay(Date.UTC(2026, 9, 7, 12, 0))).toBe('الأربعاء 2026/10/07');
+    expect(longDay(Date.UTC(2026, 9, 7, 22, 0))).toBe('الخميس 2026/10/08');
+  });
+});
