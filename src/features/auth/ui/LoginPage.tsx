@@ -6,7 +6,11 @@ import { APP_NAME, BrandMark } from '../../../shared/ui/BrandMark';
 import { PasswordInput } from '../../../shared/ui/PasswordInput';
 import { recordFailure } from '../data/lockoutRepo';
 import { clearLogoutReason, peekLogoutReason } from '../data/logoutReason';
-import { MAX_FAILED_ATTEMPTS, WRONG_PASSWORD_CODES as WRONG_PASSWORD } from '../domain/lockout';
+import {
+  LOCK_MINUTES,
+  MAX_FAILED_ATTEMPTS,
+  WRONG_PASSWORD_CODES as WRONG_PASSWORD,
+} from '../domain/lockout';
 
 export function LoginPage() {
   const [email, setEmail] = useState('');
@@ -33,7 +37,7 @@ export function LoginPage() {
         try {
           await recordFailure(fb().db, email);
           setError(
-            `البريد أو كلمة المرور غير صحيحة. بعد ${MAX_FAILED_ATTEMPTS} محاولات فاشلة يُقفل الحساب ولا يفتحه إلا المالك.`,
+            `البريد أو كلمة المرور غير صحيحة. بعد ${MAX_FAILED_ATTEMPTS} محاولات فاشلة يُقفل الحساب ${LOCK_MINUTES} دقيقة (أو حتى يفكّه المالك).`,
           );
         } catch (e2) {
           reportError('login-failure-count', e2);

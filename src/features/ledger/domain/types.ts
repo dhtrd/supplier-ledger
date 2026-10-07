@@ -101,3 +101,16 @@ export function validateEntryForm(v: EntryFormInput): EntryFormResult {
 export function isLocked(e: Pick<Entry, 'signature'>): boolean {
   return e.signature !== null;
 }
+
+/** Owner decision 2026-10-07: dates further ahead than this ask for a second save press. */
+export const FAR_FUTURE_DAYS = 30;
+
+/** Days from `today` to `date` (both YYYY-MM-DD); positive = in the future. */
+export function daysAhead(date: string, today: string): number {
+  const ms = (iso: string) => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10));
+  return Math.round((ms(date) - ms(today)) / 86_400_000);
+}
+
+export function isFarFuture(date: string, today: string): boolean {
+  return daysAhead(date, today) > FAR_FUTURE_DAYS;
+}

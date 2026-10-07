@@ -2,14 +2,26 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { Bytes, Timestamp } from 'firebase/firestore';
 import { idlePhase } from '../../src/core/idle';
-import { emailKey, isLocked, remainingAttempts } from '../../src/features/auth/domain/lockout';
+import {
+  effectiveFails,
+  emailKey,
+  isLocked,
+  minutesUntilUnlock,
+  remainingAttempts,
+} from '../../src/features/auth/domain/lockout';
 import { encodeValue } from '../../src/features/backup/domain/snapshot';
 import {
   balanceAfter,
   buildStatement,
   latestEntries,
 } from '../../src/features/ledger/domain/statement';
-import { entryLabel, isCashPayment, type Entry } from '../../src/features/ledger/domain/types';
+import {
+  daysAhead,
+  entryLabel,
+  isCashPayment,
+  isFarFuture,
+  type Entry,
+} from '../../src/features/ledger/domain/types';
 import { statementSheet } from '../../src/features/ledger/export/statementSheet';
 import { DEFAULT_SETTINGS, validateSettings } from '../../src/features/settings/domain/types';
 import { can, validatePassword } from '../../src/features/users/domain/types';
@@ -489,5 +501,25 @@ describe('account running totals', () => {
     });
     expect(readTotals({ name: 'x' })).toBeNull();
     expect(readTotals({ balance: 0, entryCount: 0 })).toEqual(ZERO_TOTALS);
+  });
+});
+
+describe('owner decisions (2)', () => {
+  const MIN = 60_000;
+  it('a lock lifts by itself 15 minutes after the last failure', () => {
+    const t = 1_000_000_000;
+    const s = { fails: 5, lastFailAtMs: t };
+    expect(isLocked(s, t + 14 * MIN)).toBe(true);
+    expect(minutesUntilUnlock(s, t + 14 * MIN)).toBe(1);
+    expect(isLocked(s, t + 15 * MIN)).toBe(false);
+    expect(effectiveFails(s, t + 16 * MIN)).toBe(0);
+    expect(effectiveFails({ fails: 3, lastFailAtMs: t }, t + 60 * MIN)).toBe(3);
+    expect(isLocked(5)).toBe(true); // unknown time: treat as locked
+  });
+  it('dates more than 30 days ahead are flagged', () => {
+    expect(daysAhead('2026-11-06', '2026-10-07')).toBe(30);
+    expect(isFarFuture('2026-11-06', '2026-10-07')).toBe(false);
+    expect(isFarFuture('2026-11-07', '2026-10-07')).toBe(true);
+    expect(isFarFuture('2020-01-01', '2026-10-07')).toBe(false);
   });
 });

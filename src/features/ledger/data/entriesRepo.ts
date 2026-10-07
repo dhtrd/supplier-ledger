@@ -175,7 +175,8 @@ export async function createEntry(
       const c = await tx.get(counter);
       if (!c.exists()) throw new AppError('عدّاد السندات غير مهيأ. شغّل سكربت إنشاء المالك أولاً.');
       next = int(c.data().next) + 1;
-      tx.update(counter, { next });
+      // The rules let the counter move only with the entry that takes the number.
+      tx.update(counter, { next, lastAccount: accountId, lastEntry: ref.id });
     }
     const attachments = writeAttachments(tx, db, uid, accountId, ref.id, files);
     tx.set(ref, { ...base, attachments, ...(next !== null ? { voucherNo: next } : {}) });

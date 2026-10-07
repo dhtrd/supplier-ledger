@@ -18,16 +18,21 @@ service cloud.firestore {
       return hashing.sha256(request.auth.token.get('email', '').lower()).toHexString().lower();
     }
     // 5 failed sign-in / PIN attempts lock the account for EVERY role (owner
-    // included) until the owner — or, for the owner, the Firebase console —
-    // resets the counter.
+    // included) for 15 minutes after the last failure (owner decision
+    // 2026-10-07), or until the owner unlocks it sooner.
     function lockoutPath() { return /databases/$(database)/documents/lockouts/$(emailKey()); }
-    function lockedOut() {
-      return exists(lockoutPath()) && get(lockoutPath()).data.fails >= 5;
+    function stillLocked(d) {
+      return d.fails >= 5 && request.time < d.lastFailAt + duration.value(15, 'm');
     }
+    function lockedOut() {
+      return exists(lockoutPath()) && stillLocked(get(lockoutPath()).data);
+    }
+    // The next failure count: +1, or 1 again once a lock has expired.
+    function nextFails(d) { return d.fails >= 5 ? 1 : d.fails + 1; }
     // Exactly one failure is added to the caller's counter in this batch.
     function failureCounted() {
       return getAfter(lockoutPath()).data.lastFailAt == request.time
-        && ((exists(lockoutPath()) && getAfter(lockoutPath()).data.fails == get(lockoutPath()).data.fails + 1)
+        && ((exists(lockoutPath()) && getAfter(lockoutPath()).data.fails == nextFails(get(lockoutPath()).data))
             || (!exists(lockoutPath()) && getAfter(lockoutPath()).data.fails == 1));
     }
     function userActive() {
@@ -167,10 +172,10 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['fails', 'lastFailAt'])
         && request.resource.data.fails == 1
         && request.resource.data.lastFailAt == request.time;
-      allow update: if resource.data.fails < 5 && failOnly()
-        && request.resource.data.fails == resource.data.fails + 1;
+      allow update: if !stillLocked(resource.data) && failOnly()
+        && request.resource.data.fails == nextFails(resource.data);
       // A successful sign-in clears its own counter (only while not locked).
-      allow update: if signedIn() && key == emailKey() && resource.data.fails < 5
+      allow update: if signedIn() && key == emailKey() && !stillLocked(resource.data)
         && changed().hasOnly(['fails']) && request.resource.data.fails == 0;
       // Reset by the user's own correct PIN in the unlock batch (the
       // /screenLocks rule checks the PIN; this one checks it is that batch).
@@ -260,7 +265,7 @@ service cloud.firestore {
       // A correct guess may be the 5th: the counter it raised is reset with it.
       function counterReset() {
         return !exists(lockoutPath())
-          || ((get(lockoutPath()).data.fails < 5
+          || ((!stillLocked(get(lockoutPath()).data)
                || get(lockoutPath()).data.lastFailAt == get(attemptPath()).data.at)
               && getAfter(lockoutPath()).data.fails == 0);
       }
@@ -308,11 +313,22 @@ service cloud.firestore {
     }
 
     // ---------- voucher counter ---------------------------------------------
+    // No gaps in voucher numbers (owner decision 2026-10-07): the counter moves
+    // only together with the NEW payment entry that takes the number.
     match /counters/vouchers {
+      function taker() {
+        return /databases/$(database)/documents/accounts/$(request.resource.data.lastAccount)/entries/$(request.resource.data.lastEntry);
+      }
       allow get: if isActive();
-      allow update: if isActive()
-        && changed().hasOnly(['next'])
-        && request.resource.data.next == resource.data.next + 1;
+      allow update: if changed().hasOnly(['next', 'lastAccount', 'lastEntry'])
+        && request.resource.data.next == resource.data.next + 1
+        && request.resource.data.lastAccount is string
+        && request.resource.data.lastAccount.matches('^[A-Za-z0-9_-]{1,64}$')
+        && request.resource.data.lastEntry is string
+        && request.resource.data.lastEntry.matches('^[A-Za-z0-9_-]{1,64}$')
+        && !exists(taker())
+        && getAfter(taker()).data.voucherNo == request.resource.data.next
+        && isActive();
       allow create, delete: if false;
     }
 

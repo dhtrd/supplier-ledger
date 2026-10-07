@@ -288,7 +288,7 @@ describe('entry validation', () => {
     const pay = { ...newInvoice('entry', 30000), type: 'payment', signed: -30000, voucherNo: 101 };
     await assertFails(setDoc(doc(db, `accounts/${ACC_A}/entries/p1`), pay));
     const b = writeBatch(db);
-    b.update(doc(db, 'counters/vouchers'), { next: 101 });
+    b.update(doc(db, 'counters/vouchers'), { next: 101, lastAccount: ACC_A, lastEntry: 'p2' });
     b.set(doc(db, `accounts/${ACC_A}/entries/p2`), pay);
     await assertSucceeds(b.commit());
   });

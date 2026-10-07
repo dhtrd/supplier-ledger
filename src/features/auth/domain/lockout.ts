@@ -11,8 +11,30 @@ export async function emailKey(email: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export function isLocked(fails: number): boolean {
-  return fails >= MAX_FAILED_ATTEMPTS;
+/** A lock lifts by itself this long after the last failure (owner decision 2026-10-07). */
+export const LOCK_MINUTES = 15;
+
+export interface FailureState {
+  fails: number;
+  /** Server time of the last failure (0 = unknown). */
+  lastFailAtMs: number;
+}
+
+export function isLocked(s: FailureState | number, nowMs: number = Date.now()): boolean {
+  const st = typeof s === 'number' ? { fails: s, lastFailAtMs: 0 } : s;
+  if (st.fails < MAX_FAILED_ATTEMPTS) return false;
+  return st.lastFailAtMs === 0 || nowMs < st.lastFailAtMs + LOCK_MINUTES * 60_000;
+}
+
+/** Failures that still count (an expired lock counts as none). */
+export function effectiveFails(s: FailureState, nowMs: number = Date.now()): number {
+  return s.fails >= MAX_FAILED_ATTEMPTS && !isLocked(s, nowMs) ? 0 : s.fails;
+}
+
+/** Whole minutes left until a lock lifts by itself (0 when not locked). */
+export function minutesUntilUnlock(s: FailureState, nowMs: number = Date.now()): number {
+  if (!isLocked(s, nowMs) || s.lastFailAtMs === 0) return 0;
+  return Math.max(1, Math.ceil((s.lastFailAtMs + LOCK_MINUTES * 60_000 - nowMs) / 60_000));
 }
 
 export function remainingAttempts(fails: number): number {

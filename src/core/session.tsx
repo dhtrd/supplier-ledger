@@ -51,6 +51,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
     let generation = 0;
     let hadUser = false;
+    /** The app was usable on this page load (so a lock now must wipe the cache). */
+    let wasReady = false;
     const stopAuth = onAuthStateChanged(auth, async (user) => {
       stopInner();
       const gen = ++generation;
@@ -62,6 +64,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         return;
       }
       hadUser = true;
+      wasReady = false;
       setState({ status: 'loading' });
       // 5 failed attempts lock the account (enforced by the rules as well).
       try {
@@ -97,6 +100,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           // snapshot that follows re-emits; on failure the lock screen shows.
           unlockAfterLogin(db, user.uid, deviceId()).catch((e) => reportError('auto-unlock', e));
         }
+        // Shared devices (owner decision 2026-10-07): when the screen locks
+        // after being in use, wipe the cached ledger data and restart on the
+        // lock screen; unlocking reads fresh from the server.
+        if (screen.locked && wasReady) {
+          wasReady = false;
+          void wipeLocalData().finally(() => window.location.reload());
+          return;
+        }
+        if (!screen.locked) wasReady = true;
         setState({
           status: screen.locked ? 'screenLocked' : 'ready',
           user,
