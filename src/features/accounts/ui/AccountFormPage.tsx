@@ -12,6 +12,7 @@ import { Logo } from '../../../shared/ui/Logo';
 import { useToast } from '../../../shared/ui/Toast';
 import { can } from '../../users/domain/types';
 import { createAccount, getAccounts, updateAccount } from '../data/accountsRepo';
+import { ArchiveCard } from './ArchiveCard';
 import {
   GROUP_LABEL,
   LOGO_MAX_BYTES,
@@ -29,6 +30,7 @@ export function AccountFormPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState<AccountForm>({ name: '', phone: '', group: 'suppliers' });
   const [logo, setLogo] = useState<Uint8Array | null>(null);
+  const [archived, setArchivedFlag] = useState(false);
   const [loaded, setLoaded] = useState(isNew);
   const [loadError, setLoadError] = useState('');
   const [errors, setErrors] = useState<Partial<Record<keyof AccountForm, string>>>({});
@@ -44,6 +46,7 @@ export function AccountFormPage() {
         const f = { name: a.name, phone: a.phone, group: a.group };
         setForm(f);
         setLogo(a.logo);
+        setArchivedFlag(a.archived);
         setInitial(fingerprint(f, a.logo));
         setLoaded(true);
       })
@@ -105,6 +108,10 @@ export function AccountFormPage() {
       setBusy(false);
     }
   };
+
+  const archiveCard = id ? (
+    <ArchiveCard id={id} name={form.name} archived={archived} onChange={setArchivedFlag} />
+  ) : null;
 
   const logoBlock = (
     <>
@@ -198,6 +205,7 @@ export function AccountFormPage() {
               ))}
             </div>
           </div>
+          {!desktop && archiveCard}
           {desktop && (
             <div className="desk-actions">
               <button
@@ -218,6 +226,7 @@ export function AccountFormPage() {
         {desktop && (
           <aside className="entry-aside" aria-label="الشعار">
             <div className="ctx-card">{logoBlock}</div>
+            {archiveCard && <div className="ctx-card">{archiveCard}</div>}
           </aside>
         )}
       </div>
