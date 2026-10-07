@@ -232,6 +232,20 @@ describe('quick unlock domain', () => {
     expect(validatePin('4829155')).not.toBeNull();
     expect(validatePin('48a915')).not.toBeNull();
     expect(validatePin('482915')).toBeNull();
+    for (const weak of [
+      '000000',
+      '777777',
+      '123456',
+      '654321',
+      '890123',
+      '210987',
+      '121212',
+      '123123',
+      '٠٠٠٠٠٠',
+    ])
+      expect(validatePin(weak), weak).not.toBeNull();
+    for (const ok of ['135790', '246810', '482915', '112358', '102938'])
+      expect(validatePin(ok), ok).toBeNull();
     expect(validatePin('٤٨٢٩١٥')).toBeNull();
     expect(normalizeDigits('۱۲۳٤٥٦')).toBe('123456');
   });
@@ -272,5 +286,22 @@ describe('lock-screen clock', () => {
     expect(clock12(Date.UTC(2026, 9, 7, 21, 0))).toEqual({ time: '12:00', period: 'ص' });
     expect(longDay(Date.UTC(2026, 9, 7, 12, 0))).toBe('الأربعاء 2026/10/07');
     expect(longDay(Date.UTC(2026, 9, 7, 22, 0))).toBe('الخميس 2026/10/08');
+  });
+});
+
+describe('sign-out note', () => {
+  it('is shown once after an other-device sign-out', async () => {
+    const store = new Map<string, string>();
+    (globalThis as { sessionStorage?: unknown }).sessionStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    };
+    const m = await import('../../src/features/auth/data/logoutReason');
+    expect(m.peekLogoutReason()).toBe('');
+    m.setLogoutReason('otherDevice');
+    expect(m.peekLogoutReason()).toContain('جهاز آخر');
+    m.clearLogoutReason();
+    expect(m.peekLogoutReason()).toBe('');
   });
 });

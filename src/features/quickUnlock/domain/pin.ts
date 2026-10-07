@@ -8,9 +8,26 @@ export function normalizeDigits(s: string): string {
     .replace(/[۰-۹]/g, (c) => String(c.charCodeAt(0) - 0x06f0));
 }
 
+/**
+ * Easy-to-guess PINs (owner decision): one repeated digit (000000), a straight
+ * run up or down (123456, 987654, 890123), or a repeated pair/triple
+ * (121212, 123123). Checked in the app only — the server never sees the PIN.
+ */
+export function isWeakPin(pin: string): boolean {
+  const d = normalizeDigits(pin);
+  if (!/^[0-9]{6}$/.test(d)) return false;
+  const n = [...d].map(Number);
+  const steps = n.slice(1).map((x, i) => (x - n[i]! + 10) % 10);
+  if (steps.every((s) => s === steps[0]) && [0, 1, 9].includes(steps[0]!)) return true;
+  if (d === d.slice(0, 2).repeat(3) || d === d.slice(0, 3).repeat(2)) return true;
+  return false;
+}
+
 /** Arabic error message, or null when the PIN is acceptable. */
 export function validatePin(pin: string): string | null {
   if (!/^[0-9]{6}$/.test(normalizeDigits(pin))) return 'الرمز 6 أرقام بالضبط.';
+  if (isWeakPin(pin))
+    return 'هذا الرمز سهل التخمين. تجنّب الأرقام المتكررة (000000) والمتتالية (123456) والمكررة (121212).';
   return null;
 }
 

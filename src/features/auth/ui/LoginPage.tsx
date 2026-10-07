@@ -1,8 +1,9 @@
 import { sendPasswordResetEmail, signInWithEmailAndPassword } from 'firebase/auth';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { errorMessage, reportError } from '../../../core/errors';
 import { fb } from '../../../core/firebase';
 import { recordFailure } from '../data/lockoutRepo';
+import { clearLogoutReason, peekLogoutReason } from '../data/logoutReason';
 import { MAX_FAILED_ATTEMPTS, WRONG_PASSWORD_CODES as WRONG_PASSWORD } from '../domain/lockout';
 
 export function LoginPage() {
@@ -10,7 +11,8 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState(peekLogoutReason);
+  useEffect(clearLogoutReason, []); // shown once
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();

@@ -3,6 +3,7 @@ import { reportError } from '../../../core/errors';
 import { fb } from '../../../core/firebase';
 import { logout, type ReadySession } from '../../../core/session';
 import { useToast } from '../../../shared/ui/Toast';
+import { setLogoutReason } from '../../auth/data/logoutReason';
 import { deviceId } from '../data/device';
 import { heartbeat, lockScreen, readScreenLock } from '../data/screenLockRepo';
 import { heartbeatEveryMs, idleOutcome } from '../domain/presence';
@@ -51,7 +52,10 @@ export function useIdleLock(s: ReadySession) {
         const now = await readScreenLock(db, user.uid);
         const outcome = idleOutcome(now, deviceId(), Date.now(), idleMinutes);
         if (outcome === 'lock') await lockScreen(db, user.uid);
-        else await logout();
+        else {
+          if (outcome === 'otherDeviceActive') setLogoutReason('otherDevice');
+          await logout();
+        }
       } catch (e) {
         reportError('idle-lock', e);
         await logout();
