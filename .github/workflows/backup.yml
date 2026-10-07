@@ -37,7 +37,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci --omit=optional
+      # firebase-admin loads Firestore from an optional dependency: keep optionals.
+      - run: npm ci
       - name: On-demand backup (only if requested in the app)
         if: github.event.schedule == '*/15 * * * *'
         run: node scripts/backup/backup.ts --requests
