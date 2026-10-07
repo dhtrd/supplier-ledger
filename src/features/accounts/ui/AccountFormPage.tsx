@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useDesktop } from '../../../shared/ui/hooks';
+import { useFormShortcuts } from '../../../shared/ui/useFormShortcuts';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { errorMessage, reportError } from '../../../core/errors';
 import { fb } from '../../../core/firebase';
 import { useReady } from '../../../core/session';
 import { ErrorBox, Loading } from '../../../core/Shell';
-import { compressImage } from '../../../shared/lib/image';
+import { compressImage, IMAGE_ACCEPT } from '../../../shared/lib/image';
 import { Icon } from '../../../shared/ui/Icon';
 import { Logo } from '../../../shared/ui/Logo';
 import { useToast } from '../../../shared/ui/Toast';
@@ -31,14 +33,18 @@ export function AccountFormPage() {
   const [loadError, setLoadError] = useState('');
   const [errors, setErrors] = useState<Partial<Record<keyof AccountForm, string>>>({});
   const [busy, setBusy] = useState(false);
+  const [initial, setInitial] = useState('');
+  const desktop = useDesktop();
 
   useEffect(() => {
     if (!id) return;
     getAccounts(fb().db, [id])
       .then(([a]) => {
         if (!a) return setLoadError('الحساب غير موجود.');
-        setForm({ name: a.name, phone: a.phone, group: a.group });
+        const f = { name: a.name, phone: a.phone, group: a.group };
+        setForm(f);
         setLogo(a.logo);
+        setInitial(fingerprint(f, a.logo));
         setLoaded(true);
       })
       .catch((e) => {
@@ -46,6 +52,17 @@ export function AccountFormPage() {
         setLoadError(errorMessage(e));
       });
   }, [id]);
+
+  const backTo = id ? `/a/${id}` : '/';
+  const dirty = isNew
+    ? !!form.name.trim() || !!form.phone.trim() || !!logo
+    : fingerprint(form, logo) !== initial;
+  const formRef = useRef<HTMLFormElement>(null);
+  const onKeyDown = useFormShortcuts({
+    onSave: () => formRef.current?.requestSubmit(),
+    onCancel: () => navigate(backTo),
+    dirty,
+  });
 
   if (!can.manageAccounts(profile.role))
     return <ErrorBox message="إضافة الحسابات وتعديلها للمالك والإدارة فقط." />;
@@ -89,101 +106,144 @@ export function AccountFormPage() {
     }
   };
 
+  const logoBlock = (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <Logo data={logo} size={88} placeholder="شعار الحساب" />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <button type="button" className="btn btn-sm" onClick={() => fileRef.current?.click()}>
+            {logo ? 'تغيير الشعار' : 'إضافة شعار'}
+          </button>
+          {logo && (
+            <button type="button" className="btn btn-sm btn-quiet" onClick={() => setLogo(null)}>
+              إزالة الشعار
+            </button>
+          )}
+          <input
+            ref={fileRef}
+            type="file"
+            accept={IMAGE_ACCEPT}
+            hidden
+            onChange={(e) => void pickLogo(e.target.files?.[0])}
+          />
+        </div>
+      </div>
+      <p className="hint" style={{ margin: 0 }}>
+        الشعار والاسم يظهران على سندات الدفع وصفحة التوقيع لهذا الحساب.
+      </p>
+    </>
+  );
+
   return (
-    <form onSubmit={submit} noValidate>
+    <form ref={formRef} onSubmit={submit} onKeyDown={onKeyDown} noValidate>
       <div
-        className="row-between no-print"
+        className="row-between no-print form-head"
         style={{
           padding: '8px 8px 12px',
           borderBottom: '2px solid var(--ink)',
           justifyContent: 'flex-start',
         }}
       >
-        <Link to={id ? `/a/${id}` : '/'} className="icon-btn" aria-label="رجوع">
+        <Link to={backTo} className="icon-btn" aria-label="رجوع">
           <Icon name="back" />
         </Link>
         <h1 className="serif" style={{ margin: 0, fontSize: 22 }}>
           {isNew ? 'حساب جديد' : 'تعديل الحساب'}
         </h1>
       </div>
-      <div className="pad stack" style={{ maxWidth: 640 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <Logo data={logo} size={88} placeholder="شعار الحساب" />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <button type="button" className="btn btn-sm" onClick={() => fileRef.current?.click()}>
-              {logo ? 'تغيير الشعار' : 'إضافة شعار'}
-            </button>
-            {logo && (
-              <button type="button" className="btn btn-sm btn-quiet" onClick={() => setLogo(null)}>
-                إزالة الشعار
-              </button>
-            )}
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              hidden
-              onChange={(e) => void pickLogo(e.target.files?.[0])}
-            />
+      <div className="entry-layout">
+        <div className="pad stack entry-main">
+          {!desktop && logoBlock}
+          <div className="amt-date">
+            <div className="field">
+              <label htmlFor="a-name">اسم العرض</label>
+              <input
+                id="a-name"
+                className="input"
+                value={form.name}
+                maxLength={120}
+                aria-invalid={!!errors.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
+              {errors.name && <div className="error-text">{errors.name}</div>}
+            </div>
+            <div className="field">
+              <label htmlFor="a-phone">الجوال (لإرسال رابط التوقيع عبر واتساب)</label>
+              <input
+                id="a-phone"
+                className="input ltr num"
+                style={{ textAlign: 'right' }}
+                inputMode="tel"
+                value={form.phone}
+                maxLength={20}
+                aria-invalid={!!errors.phone}
+                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                placeholder="05XXXXXXXX"
+              />
+              {errors.phone && <div className="error-text">{errors.phone}</div>}
+            </div>
           </div>
-        </div>
-        <p className="hint" style={{ margin: 0 }}>
-          الشعار والاسم يظهران على سندات الدفع وصفحة التوقيع لهذا الحساب.
-        </p>
-
-        <div className="field">
-          <label htmlFor="a-name">اسم العرض</label>
-          <input
-            id="a-name"
-            className="input"
-            value={form.name}
-            maxLength={120}
-            aria-invalid={!!errors.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-          />
-          {errors.name && <div className="error-text">{errors.name}</div>}
-        </div>
-        <div className="field">
-          <label htmlFor="a-phone">الجوال (لإرسال رابط التوقيع عبر واتساب)</label>
-          <input
-            id="a-phone"
-            className="input ltr num"
-            style={{ textAlign: 'right' }}
-            inputMode="tel"
-            value={form.phone}
-            maxLength={20}
-            aria-invalid={!!errors.phone}
-            onChange={(e) => setForm({ ...form, phone: e.target.value })}
-            placeholder="05XXXXXXXX"
-          />
-          {errors.phone && <div className="error-text">{errors.phone}</div>}
-        </div>
-        <div className="field">
-          <span className="label">المجموعة</span>
-          <div className="seg" role="group" aria-label="المجموعة">
-            {(Object.keys(GROUP_LABEL) as AccountGroup[]).map((g) => (
+          <div className="field">
+            <span className="label">المجموعة</span>
+            <div className="seg" role="group" aria-label="المجموعة">
+              {(Object.keys(GROUP_LABEL) as AccountGroup[]).map((g) => (
+                <button
+                  key={g}
+                  type="button"
+                  aria-pressed={form.group === g}
+                  onClick={() => setForm({ ...form, group: g })}
+                >
+                  {GROUP_LABEL[g]}
+                </button>
+              ))}
+            </div>
+          </div>
+          {desktop && (
+            <div className="desk-actions">
               <button
-                key={g}
-                type="button"
-                aria-pressed={form.group === g}
-                onClick={() => setForm({ ...form, group: g })}
+                type="submit"
+                className="btn btn-primary"
+                disabled={busy}
+                style={{ minHeight: 52 }}
               >
-                {GROUP_LABEL[g]}
+                {busy ? 'جارٍ الحفظ…' : 'حفظ'}
+                {!busy && <kbd className="kbd">Ctrl+Enter</kbd>}
               </button>
-            ))}
-          </div>
+              <Link to={backTo} className="btn btn-quiet" style={{ minHeight: 52 }}>
+                إلغاء <kbd className="kbd">Esc</kbd>
+              </Link>
+            </div>
+          )}
         </div>
+        {desktop && (
+          <aside className="entry-aside" aria-label="الشعار">
+            <div className="ctx-card">{logoBlock}</div>
+          </aside>
+        )}
       </div>
-      <div className="bottom-actions">
-        <button
-          type="submit"
-          className="btn btn-primary btn-block"
-          disabled={busy}
-          style={{ maxWidth: 640 }}
-        >
-          {busy ? 'جارٍ الحفظ…' : 'حفظ'}
-        </button>
-      </div>
+      {!desktop && (
+        <div className="bottom-actions">
+          <button
+            type="submit"
+            className="btn btn-primary btn-block"
+            disabled={busy}
+            style={{ maxWidth: 640 }}
+          >
+            {busy ? 'جارٍ الحفظ…' : 'حفظ'}
+          </button>
+        </div>
+      )}
     </form>
   );
+}
+
+/** Compares the form with what was loaded (unsaved-changes check). */
+function fingerprint(f: AccountForm, logo: Uint8Array | null): string {
+  return JSON.stringify([
+    f.name,
+    f.phone,
+    f.group,
+    logo?.byteLength ?? 0,
+    logo?.slice(0, 32).join(',') ?? '',
+  ]);
 }

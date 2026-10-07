@@ -1,11 +1,12 @@
 import { formatDateTime } from '../../../shared/lib/dates';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type MouseEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { errorMessage, reportError } from '../../../core/errors';
 import { fb } from '../../../core/firebase';
 import { logout, useReady } from '../../../core/session';
 import { useToast } from '../../../shared/ui/Toast';
-import { can } from '../../users/domain/types';
+import { useDesktop } from '../../../shared/ui/hooks';
+import { can, type Role } from '../../users/domain/types';
 import { BackupNow } from '../../backup/ui/BackupNow';
 import { QuickUnlockSettings } from '../../quickUnlock/ui/QuickUnlockSettings';
 import { getBackupMeta, saveSettings, type BackupMeta } from '../data/settingsRepo';
@@ -30,9 +31,69 @@ const PRESETS = [
 ];
 const SPARK_BYTES = 1024 ** 3;
 
+interface NavItem {
+  id: string;
+  label: string;
+}
+
+function navItems(role: Role): NavItem[] {
+  const owner = can.editSettings(role);
+  // Same order as the cards on the page.
+  return [
+    ...(owner
+      ? [
+          { id: 's-voucher', label: 'نص السندات' },
+          { id: 's-link', label: 'رابط التوقيع' },
+          { id: 's-idle', label: 'الخمول والخروج' },
+          { id: 's-roles', label: 'مسميات الأدوار' },
+        ]
+      : []),
+    ...(owner
+      ? [
+          { id: 's-backup', label: 'النسخ الاحتياطي' },
+          { id: 's-storage', label: 'المساحة' },
+        ]
+      : []),
+    { id: 's-quick', label: 'الدخول السريع' },
+    ...(can.backupNow(role) ? [{ id: 's-snapshot', label: 'نسخة لحظية' }] : []),
+    { id: 's-account', label: 'الحساب والسجل' },
+  ];
+}
+
 export function SettingsPage() {
   const { profile, settings } = useReady();
   const isOwner = can.editSettings(profile.role);
+  const desktop = useDesktop();
+  const items = navItems(profile.role);
+  const [currentId, setCurrentId] = useState(items[0]?.id ?? '');
+
+  // Highlight the section in view (desktop side nav only).
+  useEffect(() => {
+    if (!desktop || typeof IntersectionObserver === 'undefined') return;
+    const seen = new Map<string, boolean>();
+    const io = new IntersectionObserver(
+      (list) => {
+        for (const e of list) seen.set(e.target.id, e.isIntersecting);
+        const first = items.find((i) => seen.get(i.id));
+        if (first) setCurrentId(first.id);
+      },
+      { rootMargin: '-10% 0px -60% 0px' },
+    );
+    for (const i of items) {
+      const el = document.getElementById(i.id);
+      if (el) io.observe(el);
+    }
+    return () => io.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- items derive from the role only
+  }, [desktop, profile.role]);
+
+  const go = (e: MouseEvent<HTMLAnchorElement>, id: string) => {
+    // Hash routing: a plain #id link would change the route, so scroll instead.
+    e.preventDefault();
+    setCurrentId(id);
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   return (
     <>
       <header className="page-head" style={{ gap: 2 }}>
@@ -42,19 +103,35 @@ export function SettingsPage() {
           <span className="ltr">{profile.email}</span>
         </div>
       </header>
-      <div className="pad stack" style={{ maxWidth: 640, gap: 22 }}>
-        {isOwner && <OwnerSettings />}
-        <QuickUnlockSettings />
-        {can.backupNow(profile.role) && <BackupNow />}
-        {can.viewAudit(profile.role) && (
-          <Link to="/audit" className="btn" style={{ justifyContent: 'space-between' }}>
-            سجل التعديلات والحذف
-            <span aria-hidden="true">←</span>
-          </Link>
-        )}
-        <button type="button" className="btn btn-danger" onClick={() => void logout()}>
-          تسجيل الخروج
-        </button>
+      <div className="pad set-layout">
+        <nav className="set-nav" aria-label="أقسام الإعدادات">
+          {items.map((i) => (
+            <a
+              key={i.id}
+              href={`#${i.id}`}
+              aria-current={currentId === i.id ? 'true' : undefined}
+              onClick={(e) => go(e, i.id)}
+            >
+              {i.label}
+            </a>
+          ))}
+        </nav>
+        <div className="stack" style={{ gap: 22, maxWidth: desktop ? 760 : 640 }}>
+          {isOwner && <OwnerSettings />}
+          <QuickUnlockSettings />
+          {can.backupNow(profile.role) && <BackupNow />}
+          <section className="stack set-card" id="s-account" style={{ gap: 10 }}>
+            {can.viewAudit(profile.role) && (
+              <Link to="/audit" className="btn" style={{ justifyContent: 'space-between' }}>
+                سجل التعديلات والحذف
+                <span aria-hidden="true">←</span>
+              </Link>
+            )}
+            <button type="button" className="btn btn-danger" onClick={() => void logout()}>
+              تسجيل الخروج
+            </button>
+          </section>
+        </div>
       </div>
     </>
   );
@@ -113,7 +190,7 @@ function OwnerSettings() {
         </div>
       )}
 
-      <section className="stack" style={{ gap: 10 }}>
+      <section className="stack set-card" id="s-voucher" style={{ gap: 10 }}>
         <h2 className="serif" style={{ margin: 0, fontSize: 20 }}>
           نص السندات
         </h2>
@@ -132,7 +209,7 @@ function OwnerSettings() {
         </p>
       </section>
 
-      <section className="stack" style={{ gap: 10 }}>
+      <section className="stack set-card" id="s-link" style={{ gap: 10 }}>
         <h2 className="serif" style={{ margin: 0, fontSize: 20 }}>
           صلاحية رابط التوقيع
         </h2>
@@ -203,7 +280,7 @@ function OwnerSettings() {
         </p>
       </section>
 
-      <section className="stack" style={{ gap: 10 }}>
+      <section className="stack set-card" id="s-idle" style={{ gap: 10 }}>
         <h2 className="serif" style={{ margin: 0, fontSize: 20 }}>
           الخمول والخروج التلقائي
         </h2>
@@ -231,7 +308,7 @@ function OwnerSettings() {
         </p>
       </section>
 
-      <section className="stack" style={{ gap: 10 }}>
+      <section className="stack set-card" id="s-roles" style={{ gap: 10 }}>
         <h2 className="serif" style={{ margin: 0, fontSize: 20 }}>
           مسميات الأدوار
         </h2>
@@ -270,16 +347,27 @@ function OwnerSettings() {
         ))}
       </section>
 
-      <button
-        type="button"
-        className="btn btn-primary btn-block"
-        onClick={save}
-        disabled={busy || !dirty}
-      >
-        {busy ? 'جارٍ الحفظ…' : dirty ? 'حفظ الإعدادات' : 'لا تغييرات'}
-      </button>
+      <div className="set-save">
+        <button
+          type="button"
+          className="btn btn-primary"
+          style={{ flex: '1 1 220px', minHeight: 52 }}
+          onClick={save}
+          disabled={busy || !dirty}
+        >
+          {busy ? 'جارٍ الحفظ…' : 'حفظ الإعدادات'}
+        </button>
+        {dirty && !busy && (
+          <button type="button" className="btn" onClick={() => setDraft(settings)}>
+            تراجع
+          </button>
+        )}
+        <span className="hint" role="status" aria-live="polite">
+          {dirty ? 'تغييرات غير محفوظة' : 'لا تغييرات غير محفوظة'}
+        </span>
+      </div>
 
-      <section className="stack" style={{ gap: 10 }}>
+      <section className="stack set-card" id="s-backup" style={{ gap: 10 }}>
         <h2 className="serif" style={{ margin: 0, fontSize: 20 }}>
           النسخ الاحتياطي
         </h2>
@@ -325,7 +413,7 @@ function OwnerSettings() {
         )}
       </section>
 
-      <section className="stack" style={{ gap: 10 }}>
+      <section className="stack set-card" id="s-storage" style={{ gap: 10 }}>
         <h2 className="serif" style={{ margin: 0, fontSize: 20 }}>
           مساحة الصور والبيانات
         </h2>

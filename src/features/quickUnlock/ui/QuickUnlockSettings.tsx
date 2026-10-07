@@ -119,7 +119,7 @@ export function QuickUnlockSettings() {
   };
 
   return (
-    <section className="stack" style={{ gap: 10 }} aria-labelledby="qu-title">
+    <section className="stack set-card" id="s-quick" style={{ gap: 10 }} aria-labelledby="qu-title">
       <h2 id="qu-title" className="serif" style={{ margin: 0, fontSize: 20 }}>
         الدخول السريع
       </h2>

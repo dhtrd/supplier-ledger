@@ -56,7 +56,7 @@ export function BackupNow() {
   };
 
   return (
-    <section className="stack" style={{ gap: 10 }}>
+    <section className="stack set-card" id="s-snapshot" style={{ gap: 10 }}>
       <h2 className="serif" style={{ margin: 0, fontSize: 20 }}>
         نسخة احتياطية الآن
       </h2>

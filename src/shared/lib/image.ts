@@ -1,11 +1,13 @@
 import { AppError } from '../../core/errors';
+import { isApprovedImage, UNAPPROVED_IMAGE } from './imageFormats';
 
 export interface CompressedImage {
   data: Uint8Array;
   mime: 'image/webp' | 'image/jpeg';
 }
 
-const ACCEPTED = /^image\/(jpeg|png|webp|heic|heif|gif|bmp)$/i;
+export { IMAGE_ACCEPT, isApprovedImage, UNAPPROVED_IMAGE } from './imageFormats';
+
 const MAX_INPUT = 25 * 1024 * 1024;
 
 function toBlob(canvas: HTMLCanvasElement, type: string, quality: number): Promise<Blob | null> {
@@ -41,7 +43,7 @@ export async function compressImage(
   file: Blob,
   { maxBytes = 300 * 1024, maxSide = 1800 }: { maxBytes?: number; maxSide?: number } = {},
 ): Promise<CompressedImage> {
-  if (file.type && !ACCEPTED.test(file.type)) throw new AppError('الملف ليس صورة مدعومة.');
+  if (!isApprovedImage(file as Blob & { name?: string })) throw new AppError(UNAPPROVED_IMAGE);
   if (file.size > MAX_INPUT) throw new AppError('الصورة أكبر من 25 ميغابايت.');
   let img: ImageBitmap | HTMLImageElement;
   try {

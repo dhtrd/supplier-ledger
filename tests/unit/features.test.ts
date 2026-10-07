@@ -4,12 +4,17 @@ import { Bytes, Timestamp } from 'firebase/firestore';
 import { idlePhase } from '../../src/core/idle';
 import { emailKey, isLocked, remainingAttempts } from '../../src/features/auth/domain/lockout';
 import { encodeValue } from '../../src/features/backup/domain/snapshot';
-import { buildStatement } from '../../src/features/ledger/domain/statement';
+import {
+  balanceAfter,
+  buildStatement,
+  latestEntries,
+} from '../../src/features/ledger/domain/statement';
 import { entryLabel, isCashPayment, type Entry } from '../../src/features/ledger/domain/types';
 import { statementSheet } from '../../src/features/ledger/export/statementSheet';
 import { DEFAULT_SETTINGS, validateSettings } from '../../src/features/settings/domain/types';
 import { can, validatePassword } from '../../src/features/users/domain/types';
 import { decryptText, encryptText, isEnvelope } from '../../src/shared/lib/backupCrypto';
+import { IMAGE_ACCEPT, isApprovedImage } from '../../src/shared/lib/imageFormats';
 import { expiredBackupFolders, rawLink } from '../../scripts/lib/dropbox';
 import { parseLedgerSheet, verifyAgainstSheet } from '../../scripts/import/excelLedger';
 import { decode } from '../../scripts/backup/snapshot';
@@ -324,5 +329,53 @@ describe('WhatsApp signing message', () => {
     expect(m.at(-1)).toBe('https://x.io/#/s/abc');
     expect(storedPhone('+966 55 755 3590')).toBe('0557553590');
     expect(storedPhone('')).toBe('');
+  });
+});
+
+describe('entry form context (desktop layout «ب»)', () => {
+  const rows = [
+    entry({ id: 'a', signed: 1000, amount: 1000, date: '2026-09-01', order: 1 }),
+    entry({ id: 'b', type: 'payment', signed: -400, amount: 400, date: '2026-09-03', order: 2 }),
+    entry({ id: 'c', signed: 50, amount: 50, date: '2026-09-02', order: 3 }),
+    entry({ id: 'd', signed: 999, amount: 999, date: '2026-09-04', order: 4, deleted: true }),
+  ];
+  it('previews the balance after a new entry and after an edit', () => {
+    expect(balanceAfter(rows, 0)).toBe(650);
+    expect(balanceAfter(rows, 200)).toBe(850);
+    expect(balanceAfter(rows, -100, 'b')).toBe(950);
+    expect(balanceAfter(rows, 10, 'd')).toBe(660); // a deleted entry is not replaced
+  });
+  it('lists the latest live entries newest first by date then order', () => {
+    expect(latestEntries(rows, 2).map((e) => e.id)).toEqual(['b', 'c']);
+    expect(latestEntries(rows, 5).map((e) => e.id)).toEqual(['b', 'c', 'a']);
+  });
+});
+
+describe('approved attachment formats', () => {
+  it('accepts JPEG, PNG and WebP only', () => {
+    for (const type of ['image/jpeg', 'image/png', 'image/webp', 'IMAGE/JPEG'])
+      expect(isApprovedImage({ type, name: 'x' })).toBe(true);
+    for (const type of [
+      'image/heic',
+      'image/gif',
+      'image/bmp',
+      'image/svg+xml',
+      'application/pdf',
+      'text/html',
+    ])
+      expect(isApprovedImage({ type, name: 'x.jpg' })).toBe(false);
+  });
+  it('judges a file without a MIME type by its extension', () => {
+    expect(isApprovedImage({ type: '', name: 'scan.JPG' })).toBe(true);
+    expect(isApprovedImage({ type: '', name: 'scan.webp' })).toBe(true);
+    expect(isApprovedImage({ type: '', name: 'scan.heic' })).toBe(false);
+    expect(isApprovedImage({ type: '', name: 'evil.jpg.exe' })).toBe(false);
+    expect(isApprovedImage({ type: '' })).toBe(false);
+  });
+  it('keeps the picker list in step with the check', () => {
+    expect(IMAGE_ACCEPT.split(',')).toEqual(
+      expect.arrayContaining(['image/jpeg', 'image/png', 'image/webp']),
+    );
+    expect(IMAGE_ACCEPT).not.toMatch(/\*|heic|gif|svg/);
   });
 });
