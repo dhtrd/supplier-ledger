@@ -1,0 +1,302 @@
+rules_version = '2';
+
+// =============================================================================
+// supplier-ledger — Firestore security rules
+// Every permission in the spec is enforced HERE (the UI only mirrors it).
+// Roles: owner | admin ("الإدارة") | entry ("مدخل البيانات").
+// Amounts are integers in halalas. Dates are 'YYYY-MM-DD' strings.
+// =============================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- helpers ----------------------------------------------------
+    function docPath(p) { return /databases/$(database)/documents/$(p); }
+    function signedIn() { return request.auth != null; }
+    function userDoc() { return get(/databases/$(database)/documents/users/$(request.auth.uid)); }
+    function isActive() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && userDoc().data.active == true;
+    }
+    function myRole() { return userDoc().data.role; }
+    function isOwner() { return isActive() && myRole() == 'owner'; }
+    function isManager() { return isActive() && myRole() in ['owner', 'admin']; }
+    function isEntryFor(accountId) {
+      return isActive() && myRole() == 'entry' && accountId in userDoc().data.assignedAccounts;
+    }
+    function canAccess(accountId) { return isManager() || isEntryFor(accountId); }
+    function settings() { return get(/databases/$(database)/documents/settings/app).data; }
+    function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+    function isDate(v) { return v is string && v.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'); }
+    function shortText(v, max) { return v is string && v.size() <= max; }
+    function stamped(d) { return d.createdBy == request.auth.uid && d.createdAt == request.time; }
+    function touched(d) { return d.updatedBy == request.auth.uid && d.updatedAt == request.time; }
+
+    // Every edit/delete of financial data must land with an audit record in the
+    // same batch (enforced via getAfter).
+    function audited(path) {
+      return request.resource.data.auditId is string
+        && request.resource.data.auditId != resource.data.get('auditId', '')
+        && existsAfter(/databases/$(database)/documents/auditLog/$(request.resource.data.auditId))
+        && getAfter(/databases/$(database)/documents/auditLog/$(request.resource.data.auditId)).data.actor == request.auth.uid
+        && getAfter(/databases/$(database)/documents/auditLog/$(request.resource.data.auditId)).data.path == path;
+    }
+
+    // ---------- users --------------------------------------------------------
+    match /users/{uid} {
+      function validUser(d) {
+        return d.keys().hasOnly(['name', 'email', 'role', 'active', 'assignedAccounts',
+                                 'createdAt', 'createdBy', 'updatedAt', 'updatedBy'])
+          && shortText(d.name, 80) && d.name.size() > 0
+          && shortText(d.email, 200)
+          && d.active is bool
+          && d.assignedAccounts is list && d.assignedAccounts.size() <= 200;
+      }
+      allow get: if signedIn() && (request.auth.uid == uid || isManager());
+      allow list: if isManager();
+      // Managers create admins / data-entry users. The owner is created only by
+      // the bootstrap script (Admin SDK), never from the client.
+      allow create: if isManager()
+        && validUser(request.resource.data)
+        && request.resource.data.role in ['admin', 'entry']
+        && stamped(request.resource.data);
+      // Managers edit non-owner users (role stays admin/entry).
+      allow update: if isManager()
+        && resource.data.role != 'owner'
+        && uid != request.auth.uid
+        && validUser(request.resource.data)
+        && request.resource.data.role in ['admin', 'entry']
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.createdBy == resource.data.createdBy
+        && touched(request.resource.data);
+      // The owner may rename himself — nothing else (role/active are frozen).
+      allow update: if isOwner()
+        && uid == request.auth.uid
+        && changed().hasOnly(['name', 'updatedAt', 'updatedBy'])
+        && shortText(request.resource.data.name, 80) && request.resource.data.name.size() > 0
+        && touched(request.resource.data);
+      allow delete: if false;
+    }
+
+    // ---------- settings (owner only) ---------------------------------------
+    match /settings/app {
+      allow get: if isActive();
+      allow update: if isOwner()
+        && changed().hasOnly(['linkMinutes', 'payerName', 'roleLabels', 'updatedAt', 'updatedBy'])
+        && request.resource.data.linkMinutes is int
+        && request.resource.data.linkMinutes >= 5 && request.resource.data.linkMinutes <= 1440
+        && shortText(request.resource.data.payerName, 100)
+        && request.resource.data.roleLabels.keys().hasOnly(['owner', 'admin', 'entry'])
+        && shortText(request.resource.data.roleLabels.owner, 40)
+        && shortText(request.resource.data.roleLabels.admin, 40)
+        && shortText(request.resource.data.roleLabels.entry, 40)
+        && touched(request.resource.data);
+      allow create, delete: if false;
+    }
+
+    // Written only by the backup job (Admin SDK).
+    match /meta/{doc} {
+      allow get: if isOwner();
+      allow write: if false;
+    }
+
+    // ---------- voucher counter ---------------------------------------------
+    match /counters/vouchers {
+      allow get: if isActive();
+      allow update: if isActive()
+        && changed().hasOnly(['next'])
+        && request.resource.data.next == resource.data.next + 1;
+      allow create, delete: if false;
+    }
+
+    // ---------- audit log (append-only) -------------------------------------
+    match /auditLog/{id} {
+      allow read: if isManager();
+      allow create: if isActive()
+        && request.resource.data.keys().hasOnly(['actor', 'action', 'path', 'before', 'at'])
+        && request.resource.data.actor == request.auth.uid
+        && request.resource.data.at == request.time
+        && request.resource.data.action in ['update', 'delete']
+        && request.resource.data.path is string;
+      allow update, delete: if false;
+    }
+
+    // ---------- accounts (suppliers / customers) ----------------------------
+    match /accounts/{accountId} {
+      function validAccount(d) {
+        return d.keys().hasOnly(['name', 'phone', 'group', 'logo', 'deleted',
+                                 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'legacyId'])
+          && shortText(d.name, 120) && d.name.size() > 0
+          && shortText(d.phone, 20)
+          && d.group in ['suppliers', 'customers', 'general']
+          && (!('logo' in d) || d.logo == null || (d.logo is bytes && d.logo.size() <= 81920))
+          && d.deleted is bool;
+      }
+      allow get: if canAccess(accountId);
+      allow list: if isManager();
+      allow create: if isManager()
+        && validAccount(request.resource.data)
+        && request.resource.data.deleted == false
+        && stamped(request.resource.data);
+      allow update: if isManager()
+        && validAccount(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.createdBy == resource.data.createdBy
+        && touched(request.resource.data);
+      allow delete: if false;
+
+      // ---------- entries ----------------------------------------------------
+      match /entries/{entryId} {
+        function validEntry(d) {
+          return d.keys().hasOnly(['type', 'amount', 'signed', 'date', 'details', 'attachments',
+                                   'voucherNo', 'signLinkId', 'signature', 'deleted', 'deletedAt',
+                                   'auditId', 'legacyId',
+                                   'createdAt', 'createdBy', 'updatedAt', 'updatedBy'])
+            && d.type in ['invoice', 'payment', 'note']
+            && d.amount is int && d.amount >= 0 && d.amount <= 100000000000
+            && ((d.type == 'note' && d.amount == 0 && d.signed == 0)
+                || (d.type == 'invoice' && d.amount > 0 && d.signed == d.amount)
+                || (d.type == 'payment' && d.amount > 0 && d.signed == -d.amount))
+            && isDate(d.date)
+            && shortText(d.details, 500)
+            && d.attachments is list && d.attachments.size() <= 5
+            && d.deleted is bool;
+        }
+        function voucherAllocated(d) {
+          // Payment vouchers take the next number from the shared counter, in
+          // the same batch that bumps it.
+          return d.voucherNo is int
+            && d.voucherNo == getAfter(/databases/$(database)/documents/counters/vouchers).data.next
+            && getAfter(/databases/$(database)/documents/counters/vouchers).data.next
+               == get(/databases/$(database)/documents/counters/vouchers).data.next + 1;
+        }
+        function signatureFromLink(d) {
+          // A signature can only be copied from a signed link of THIS entry.
+          return d.signLinkId is string
+            && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.status == 'signed'
+            && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.entryId == entryId
+            && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.accountId == accountId
+            && d.signature.name == get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.signerName
+            && d.signature.image == get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.signatureImage
+            && d.signature.signedAt == get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.signedAt;
+        }
+
+        allow read: if canAccess(accountId);
+
+        allow create: if canAccess(accountId)
+          && validEntry(request.resource.data)
+          && request.resource.data.deleted == false
+          && !('signature' in request.resource.data)
+          && !('signLinkId' in request.resource.data)
+          && !('legacyId' in request.resource.data)
+          && stamped(request.resource.data)
+          && (request.resource.data.type != 'payment' || voucherAllocated(request.resource.data))
+          && (request.resource.data.type == 'payment' || !('voucherNo' in request.resource.data));
+
+        // Normal edit / soft delete — unsigned entries only, always audited.
+        allow update: if canAccess(accountId)
+          && resource.data.deleted == false
+          && !('signature' in resource.data)
+          && validEntry(request.resource.data)
+          && request.resource.data.type == resource.data.type
+          && request.resource.data.get('voucherNo', null) == resource.data.get('voucherNo', null)
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.createdBy == resource.data.createdBy
+          && !('signature' in request.resource.data)
+          && (!('deletedAt' in request.resource.data) || request.resource.data.deletedAt == request.time)
+          && (request.resource.data.deleted == false || 'deletedAt' in request.resource.data)
+          && touched(request.resource.data)
+          && audited('accounts/' + accountId + '/entries/' + entryId);
+
+        // Attach the recipient's signature (copied from the signed link).
+        allow update: if canAccess(accountId)
+          && resource.data.type == 'payment'
+          && resource.data.deleted == false
+          && !('signature' in resource.data)
+          && changed().hasOnly(['signLinkId', 'signature', 'updatedAt', 'updatedBy'])
+          && signatureFromLink(request.resource.data)
+          && touched(request.resource.data);
+
+        allow delete: if false;
+      }
+
+      // ---------- attachments (compressed images, ≤ 300 KB) ----------------
+      match /attachments/{attId} {
+        allow read: if canAccess(accountId);
+        allow create: if canAccess(accountId)
+          && request.resource.data.keys().hasOnly(['data', 'mime', 'size', 'entryId', 'createdAt', 'createdBy'])
+          && request.resource.data.data is bytes
+          && request.resource.data.data.size() <= 307200
+          && request.resource.data.size == request.resource.data.data.size()
+          && request.resource.data.mime in ['image/webp', 'image/jpeg']
+          && request.resource.data.entryId is string
+          && stamped(request.resource.data);
+        allow update: if false;
+        allow delete: if isManager();
+      }
+    }
+
+    // ---------- signing links ------------------------------------------------
+    // The token (document id) is a 128-bit random value. A link is readable and
+    // signable without login only while pending and before expiry (server
+    // time); signing flips it to 'signed', after which it is dead.
+    match /signLinks/{token} {
+      function live() {
+        return resource.data.status == 'pending'
+          && request.time < resource.data.createdAt + duration.value(resource.data.ttlMinutes, 'm');
+      }
+      function entryAt(d) {
+        return get(/databases/$(database)/documents/accounts/$(d.accountId)/entries/$(d.entryId)).data;
+      }
+
+      allow get: if live() || (isActive() && canAccess(resource.data.accountId));
+      allow list: if isActive() && canAccess(resource.data.accountId);
+
+      allow create: if isActive()
+        && token.size() >= 22
+        && canAccess(request.resource.data.accountId)
+        && request.resource.data.keys().hasOnly(['accountId', 'entryId', 'accountName', 'accountPhone', 'logo',
+                                                 'payerName', 'amount', 'amountWords', 'date', 'details',
+                                                 'voucherNo', 'ttlMinutes', 'status', 'synced',
+                                                 'createdAt', 'createdBy'])
+        && request.resource.data.status == 'pending'
+        && request.resource.data.synced == false
+        && request.resource.data.ttlMinutes == settings().linkMinutes
+        && entryAt(request.resource.data).type == 'payment'
+        && entryAt(request.resource.data).deleted == false
+        && !('signature' in entryAt(request.resource.data))
+        && entryAt(request.resource.data).amount == request.resource.data.amount
+        && entryAt(request.resource.data).voucherNo == request.resource.data.voucherNo
+        && shortText(request.resource.data.amountWords, 300)
+        && shortText(request.resource.data.details, 500)
+        && (!('logo' in request.resource.data) || request.resource.data.logo == null
+            || (request.resource.data.logo is bytes && request.resource.data.logo.size() <= 81920))
+        && stamped(request.resource.data);
+
+      // Recipient signs (no login): once, before expiry, only these fields.
+      allow update: if live()
+        && changed().hasOnly(['status', 'signerName', 'signatureImage', 'signedAt'])
+        && request.resource.data.status == 'signed'
+        && request.resource.data.signedAt == request.time
+        && request.resource.data.signerName is string
+        && request.resource.data.signerName.size() >= 2 && request.resource.data.signerName.size() <= 80
+        && request.resource.data.signatureImage is string
+        && request.resource.data.signatureImage.matches('^data:image/png;base64,[A-Za-z0-9+/=]+$')
+        && request.resource.data.signatureImage.size() <= 61440;
+
+      // Staff: revoke a pending link, or mark a signed one as synced.
+      allow update: if isActive() && canAccess(resource.data.accountId)
+        && ((resource.data.status == 'pending'
+             && changed().hasOnly(['status']) && request.resource.data.status == 'revoked')
+            || (resource.data.status == 'signed'
+             && changed().hasOnly(['synced']) && request.resource.data.synced == true));
+
+      allow delete: if false;
+    }
+
+    // Everything else is closed.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

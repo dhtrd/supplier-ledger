@@ -1,0 +1,17 @@
+node_modules/
+dist/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+# Firebase
+.firebase/
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+# Private data — never commit
+*.db
+*.db3
+service-account*.json
+data/

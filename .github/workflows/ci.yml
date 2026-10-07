@@ -1,0 +1,116 @@
+# CI/CD — every PR must pass lint, types, unit tests, Firestore-rules tests,
+# build and the security scan. Deploys (Pages + Firestore rules) run ONLY on
+# main and ONLY after every check is green.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint · types · unit tests · build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - name: Build
+        run: npm run build
+        env:
+          VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+      - uses: actions/upload-pages-artifact@v5
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          path: dist
+
+  rules:
+    name: Firestore security-rules tests (emulator)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - run: npm run test:rules
+
+  security:
+    name: Security scan (dependencies + secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Production dependencies — no high/critical advisories
+        run: npm audit --omit=dev --audit-level=high
+      - name: Secret scan (gitleaks)
+        run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest detect --source=/repo --no-banner --redact
+
+  deploy-pages:
+    name: Deploy app to GitHub Pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.VITE_FIREBASE_PROJECT_ID != ''
+    needs: [checks, rules, security]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v6
+      - id: deployment
+        uses: actions/deploy-pages@v5
+
+  deploy-rules:
+    name: Deploy Firestore rules + indexes
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.VITE_FIREBASE_PROJECT_ID != ''
+    needs: [checks, rules, security]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Deploy
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          PROJECT: ${{ vars.VITE_FIREBASE_PROJECT_ID }}
+        run: |
+          if [ -z "$SA" ]; then echo "::error::FIREBASE_SERVICE_ACCOUNT secret is missing"; exit 1; fi
+          printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          npx firebase deploy --only firestore:rules,firestore:indexes --project "$PROJECT" --non-interactive
+          rm -f "$RUNNER_TEMP/sa.json"
