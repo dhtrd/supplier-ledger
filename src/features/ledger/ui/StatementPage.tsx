@@ -27,7 +27,7 @@ import { EntrySheet } from './EntrySheet';
 import { signStateOf } from './signState';
 import { useLedger } from './useLedger';
 
-type Filter = 'all' | 'invoice' | 'payment';
+type Filter = 'all' | 'invoice' | 'payment' | 'unsigned';
 
 export function StatementPage() {
   const { id = '' } = useParams();
@@ -61,7 +61,14 @@ export function StatementPage() {
   const account = ledger.account;
 
   const showBalances = can.seeBalances(profile.role);
-  const shown = statement.rows.filter((r) => filter === 'all' || r.entry.type === filter);
+  // Owner decision: only vouchers recorded in this app are marked (migrated
+  // ones were settled in the old app).
+  const unsigned = (e: Entry) =>
+    isCashPayment(e) && !e.legacy && signStateOf(e, ledger.links, now).kind !== 'signed';
+  const unsignedCount = statement.rows.filter((r) => unsigned(r.entry)).length;
+  const shown = statement.rows.filter((r) =>
+    filter === 'all' ? true : filter === 'unsigned' ? unsigned(r.entry) : r.entry.type === filter,
+  );
   const newestFirst = [...shown].reverse();
   const closingSide = balanceSide(statement.closing);
   const sideColor =
@@ -92,15 +99,20 @@ export function StatementPage() {
     }
   };
 
+  /** Approved design «ب»: a small stamp beside the voucher number. */
+  const stamp = (e: Entry) => {
+    if (!isCashPayment(e) || e.legacy) return null;
+    return signStateOf(e, ledger.links, now).kind === 'signed' ? (
+      <span className="stamp stamp-ok">موقّع</span>
+    ) : (
+      <span className="stamp stamp-no">بلا توقيع</span>
+    );
+  };
+
   const signCell = (e: Entry) => {
     const st = signStateOf(e, ledger.links, now);
     if (!isCashPayment(e)) return null;
-    if (st.kind === 'signed')
-      return (
-        <span className="lah" style={{ fontSize: 13 }}>
-          ✓ موقّع
-        </span>
-      );
+    if (st.kind === 'signed') return null; // shown as the «موقّع» stamp
     if (st.kind === 'pending')
       return (
         <span style={{ fontSize: 13, color: 'var(--warn)' }}>
@@ -244,6 +256,16 @@ export function StatementPage() {
                 {f === 'all' ? 'الكل' : f === 'invoice' ? 'الفواتير' : 'الدفعات'}
               </button>
             ))}
+            {(unsignedCount > 0 || filter === 'unsigned') && (
+              <button
+                type="button"
+                className="pill"
+                aria-pressed={filter === 'unsigned'}
+                onClick={() => setFilter(filter === 'unsigned' ? 'all' : 'unsigned')}
+              >
+                غير الموقّعة <span className="num pill-count">{unsignedCount}</span>
+              </button>
+            )}
           </div>
           {desktop && (
             <div style={{ display: 'flex', gap: 10, marginInlineStart: 'auto' }}>
@@ -330,6 +352,7 @@ export function StatementPage() {
                         #{e.voucherNo}
                       </span>
                     )}
+                    {stamp(e)}
                     {e.details || <span className="muted">{entryLabel(e)}</span>}
                     {e.attachments.length > 0 && (
                       <span className="muted" style={{ marginInlineStart: 6 }}>
@@ -407,6 +430,7 @@ export function StatementPage() {
                   <div className="muted num" style={{ fontSize: 13, marginTop: 2 }}>
                     {displayDate(e.date)} · {entryLabel(e)}
                     {e.voucherNo !== null && ` #${e.voucherNo}`}
+                    {stamp(e)}
                     {e.attachments.length > 0 && ` · 📎 ${e.attachments.length}`}
                   </div>
                 </div>
@@ -430,9 +454,7 @@ export function StatementPage() {
                   )}
                 </div>
               </div>
-              {isCashPayment(e) && !(e.legacy && !e.signature) && (
-                <div style={{ marginTop: 6 }}>{signCell(e)}</div>
-              )}
+              {signCell(e) && <div style={{ marginTop: 6 }}>{signCell(e)}</div>}
             </div>
           ))}
           {showBalances && (

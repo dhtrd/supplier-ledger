@@ -1012,3 +1012,36 @@ textarea.input {
     width: 0;
   }
 }
+
+/* ---------- voucher signature stamp (approved «ب») ---------- */
+.stamp {
+  display: inline-block;
+  font: 700 11px/1.5 var(--sans);
+  border-radius: 6px;
+  padding: 0 6px;
+  margin-inline: 6px;
+  transform: rotate(-3deg);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.stamp-no {
+  color: var(--alayh);
+  border: 1.5px dashed var(--alayh);
+}
+.stamp-ok {
+  color: var(--lah);
+  border: 1.5px solid var(--lah);
+}
+.pill-count {
+  color: var(--alayh);
+  font-weight: 700;
+  margin-inline-start: 4px;
+}
+.pill[aria-pressed='true'] .pill-count {
+  color: inherit;
+}
+@media print {
+  .stamp {
+    transform: none;
+  }
+}
