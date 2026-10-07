@@ -4,9 +4,10 @@ import { errorMessage, reportError } from '../../../core/errors';
 import { fb } from '../../../core/firebase';
 import { useReady } from '../../../core/session';
 import { ErrorBox, Loading } from '../../../core/Shell';
-import { displayDate, todayRiyadh } from '../../../shared/lib/dates';
+import { displayDate, formatDateTime, todayRiyadh } from '../../../shared/lib/dates';
 import {
   IMAGE_ACCEPT,
+  IMAGE_FORMATS_LABEL,
   isApprovedImage,
   preparePhoto,
   UNAPPROVED_IMAGE,
@@ -20,8 +21,11 @@ import { useToast } from '../../../shared/ui/Toast';
 import { useFormShortcuts } from '../../../shared/ui/useFormShortcuts';
 import { getAccounts } from '../../accounts/data/accountsRepo';
 import { pendingLinkIds } from '../../signing/data/signLinksRepo';
+import { setArchived } from '../../accounts/data/accountsRepo';
+import type { Account } from '../../accounts/domain/types';
 import {
   createEntry,
+  entryChanged,
   getEntry,
   updateEntry,
   type EntrySnapshot,
@@ -36,6 +40,9 @@ import {
   validateEntryForm,
   type EntryType,
 } from '../domain/types';
+import { entryTitle } from '../../notifications/domain/notification';
+import { ConfirmGate } from '../../../shared/ui/ConfirmGate';
+import { can } from '../../users/domain/types';
 import { EntryContextPanel } from './EntryContextPanel';
 
 const TYPE_COLOR: Record<EntryType, string> = {
@@ -57,14 +64,17 @@ const SAVE_LABEL: Record<EntryType, string> = {
 export function EntryFormPage() {
   const { id = '', entryId } = useParams();
   const [params] = useSearchParams();
-  const { user } = useReady();
+  const { user, profile } = useReady();
   const navigate = useNavigate();
   const toast = useToast();
   const isNew = !entryId;
   const initialType =
     (['invoice', 'payment', 'note'] as const).find((t) => t === params.get('type')) ?? 'invoice';
 
-  const [accountName, setAccountName] = useState('');
+  const [account, setAccount] = useState<Account | null>(null);
+  const accountName = account?.name ?? '';
+  /** A step to confirm before the form: a signed voucher, or an archived account. */
+  const [gate, setGate] = useState<null | 'signed' | 'archived'>(null);
   const [current, setCurrent] = useState<EntrySnapshot | null>(null);
   const [loadError, setLoadError] = useState('');
   const [loaded, setLoaded] = useState(false);
@@ -91,10 +101,13 @@ export function EntryFormPage() {
     ])
       .then(([[acc], snap]) => {
         if (!acc) return setLoadError('الحساب غير موجود.');
-        setAccountName(acc.name);
+        setAccount(acc);
+        if (acc.archived && !can.archiveAccounts(profile.role))
+          return setLoadError('هذا الحساب مؤرشف. راجع الإدارة لإعادته.');
+        if (!entryId && acc.archived) setGate('archived');
         if (entryId) {
           if (!snap || snap.entry.deleted) return setLoadError('العملية غير موجودة أو حُذفت.');
-          if (snap.entry.signature) return setLoadError('السند موقّع ولا يمكن تعديله.');
+          if (snap.entry.signature) setGate('signed');
           const e = snap.entry;
           setCurrent(snap);
           setType(e.type);
@@ -109,7 +122,7 @@ export function EntryFormPage() {
         reportError('entry-load', e);
         setLoadError(errorMessage(e));
       });
-  }, [id, entryId]);
+  }, [id, entryId, profile.role]);
 
   const attachmentCount = keep.length + added.length;
 
@@ -180,26 +193,30 @@ export function EntryFormPage() {
     try {
       const { db } = fb();
       if (current) {
+        const changes = {
+          amount: res.amount,
+          signed: res.signed,
+          date: res.date,
+          details: res.details,
+          keepAttachments: keep,
+        };
+        if (!entryChanged(current.entry, changes, added.length)) {
+          toast.info('لا تغييرات؛ لم يُحفظ شيء.');
+          navigate(`/a/${id}`, { replace: true });
+          return;
+        }
+        const wasSigned = current.entry.signature !== null;
         const revoke =
           current.entry.type === 'payment' ? await pendingLinkIds(db, id, current.entry.id) : [];
-        await updateEntry(
-          db,
-          user.uid,
-          id,
-          current,
-          {
-            amount: res.amount,
-            signed: res.signed,
-            date: res.date,
-            details: res.details,
-            keepAttachments: keep,
-          },
-          added,
-          revoke,
-        );
-        if (revoke.length)
+        await updateEntry(db, user.uid, id, current, changes, added, revoke, {
+          actorName: profile.name,
+          accountName,
+        });
+        if (wasSigned)
+          toast.info('حُفظ التعديل وأُلغي توقيع السند. أرسل رابط توقيع جديداً للمورد من الكشف.');
+        else if (revoke.length)
           toast.info('أُلغي رابط التوقيع المفتوح لهذه الدفعة؛ أرسل رابطاً جديداً بالمبلغ المعدّل.');
-        toast.info('حُفظ التعديل وسُجّلت النسخة السابقة في سجل التعديلات.');
+        if (!wasSigned) toast.info('حُفظ التعديل وسُجّلت النسخة السابقة في سجل التعديلات.');
       } else {
         const out = await createEntry(
           db,
@@ -264,6 +281,38 @@ export function EntryFormPage() {
 
   if (loadError) return <ErrorBox message={loadError} />;
   if (!loaded) return <Loading />;
+  if (gate === 'signed' && current?.entry.signature)
+    return (
+      <ConfirmGate
+        title={`${entryTitle(current.entry)} موقّع`}
+        backTo={`/a/${id}`}
+        confirmLabel="متابعة التعديل"
+        onConfirm={() => setGate(null)}
+      >
+        وقّعه <strong>{current.entry.signature.name}</strong>
+        {current.entry.signature.signedAtMs > 0 &&
+          ` يوم ${formatDateTime(current.entry.signature.signedAtMs)}`}
+        .<br />
+        إن عدّلت أي بيانات فيه <strong>يُلغى التوقيع</strong>، ويصبح السند «بلا توقيع» حتى ترسل
+        رابطاً جديداً للمورد، ويصل تنبيه للمالك والإدارة. التوقيع القديم يبقى في سجل التعديلات.
+      </ConfirmGate>
+    );
+  if (gate === 'archived' && account)
+    return (
+      <ConfirmGate
+        title="الحساب مؤرشف"
+        backTo={`/a/${id}`}
+        confirmLabel="إعادته إلى القائمة والمتابعة"
+        onConfirm={async () => {
+          await setArchived(fb().db, user.uid, account, false);
+          setAccount({ ...account, archived: false });
+          toast.info(`أُعيد «${account.name}» إلى قائمة الحسابات.`);
+          setGate(null);
+        }}
+      >
+        «{account.name}» مؤرشف ولا يظهر في قائمة الحسابات. لإضافة عملية فيه يُعاد إلى القائمة أولاً.
+      </ConfirmGate>
+    );
 
   return (
     <form onSubmit={submit} onKeyDown={onKeyDown} noValidate className="entry-form">
@@ -454,7 +503,7 @@ export function EntryFormPage() {
             <div className="hint">
               {processing
                 ? 'جارٍ ضغط الصورة…'
-                : 'الصيغ المسموحة: JPG أو PNG أو WebP. تُضغط الصورة تلقائياً قبل الرفع (حتى 300 KB).'}
+                : `الصيغ المسموحة: ${IMAGE_FORMATS_LABEL}. تُضغط الصورة تلقائياً قبل الرفع (حتى 300 KB).`}
             </div>
             {errors.attachments && <div className="error-text">{errors.attachments}</div>}
             {(keep.length > 0 || added.length > 0) && (

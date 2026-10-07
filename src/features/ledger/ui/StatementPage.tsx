@@ -16,11 +16,14 @@ import { useDesktop, useNow } from '../../../shared/ui/hooks';
 import { Icon } from '../../../shared/ui/Icon';
 import { Logo } from '../../../shared/ui/Logo';
 import { Money } from '../../../shared/ui/RiyalSign';
+import { Sheet } from '../../../shared/ui/Sheet';
 import { useToast } from '../../../shared/ui/Toast';
+import { fb } from '../../../core/firebase';
+import { setArchived } from '../../accounts/data/accountsRepo';
 import { GROUP_LABEL } from '../../accounts/domain/types';
 import { can } from '../../users/domain/types';
 import type { EntrySnapshot } from '../data/entriesRepo';
-import { buildStatement, fullRange } from '../domain/statement';
+import { accountBalance, buildStatement, fullRange } from '../domain/statement';
 import { entryLabel, isCashPayment, SUBTYPE_LABEL, type Entry } from '../domain/types';
 import { downloadStatementXlsx } from '../export/statementSheet';
 import { EntrySheet } from './EntrySheet';
@@ -36,8 +39,18 @@ export function StatementPage() {
   const [params, setParams] = useSearchParams();
   const [filter, setFilter] = useState<Filter>('all');
   const [rangeOpen, setRangeOpen] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null);
+  // ?e=<entryId> opens that entry (links from the notifications tab), also
+  // when the statement is already on screen.
+  const eParam = params.get('e');
+  const [selected, setSelected] = useState<string | null>(eParam);
+  const [seenE, setSeenE] = useState(eParam);
+  if (eParam !== seenE) {
+    setSeenE(eParam);
+    if (eParam) setSelected(eParam);
+  }
   const [exporting, setExporting] = useState(false);
+  const [archiveAsk, setArchiveAsk] = useState(false);
+  const [archBusy, setArchBusy] = useState(false);
   const desktop = useDesktop();
   const now = useNow();
   const toast = useToast();
@@ -54,6 +67,8 @@ export function StatementPage() {
   );
   const statement = useMemo(() => buildStatement(entries, range), [entries, range]);
 
+  if (ledger.account?.archived && !can.archiveAccounts(profile.role))
+    return <ErrorBox message="هذا الحساب مؤرشف. راجع الإدارة لإعادته." />;
   if (ledger.error) return <ErrorBox message={ledger.error} />;
   if (ledger.account === undefined || ledger.entries === undefined) return <Loading />;
   if (ledger.account === null)
@@ -96,6 +111,25 @@ export function StatementPage() {
       toast.error(`تعذّر التصدير: ${errorMessage(e)}`);
     } finally {
       setExporting(false);
+    }
+  };
+
+  const fullBalance = accountBalance(entries);
+  const toggleArchive = async (archived: boolean) => {
+    setArchBusy(true);
+    try {
+      await setArchived(fb().db, user.uid, account, archived);
+      toast.info(
+        archived
+          ? `أُرشف «${account.name}». تجده في «المؤرشفة» أسفل قائمة الحسابات.`
+          : `أُعيد «${account.name}» إلى قائمة الحسابات.`,
+      );
+      setArchiveAsk(false);
+    } catch (e) {
+      reportError('archive', e);
+      toast.error(errorMessage(e));
+    } finally {
+      setArchBusy(false);
     }
   };
 
@@ -152,6 +186,16 @@ export function StatementPage() {
               تعديل الحساب
             </Link>
           )}
+          {can.archiveAccounts(profile.role) && !account.archived && (
+            <button
+              type="button"
+              className="btn-link"
+              style={{ fontSize: 14 }}
+              onClick={() => setArchiveAsk(true)}
+            >
+              أرشفة
+            </button>
+          )}
           <button
             type="button"
             className="btn-link"
@@ -171,6 +215,25 @@ export function StatementPage() {
         </div>
       </div>
 
+      {account.archived && (
+        <div
+          className="banner banner-warn no-print"
+          role="status"
+          style={{ margin: '8px var(--gutter)' }}
+        >
+          هذا الحساب مؤرشف ولا يظهر في قائمة الحسابات.{' '}
+          {can.archiveAccounts(profile.role) && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => void toggleArchive(false)}
+              disabled={archBusy}
+            >
+              {archBusy ? 'جارٍ…' : 'إعادته إلى القائمة'}
+            </button>
+          )}
+        </div>
+      )}
       <section style={{ padding: '4px var(--gutter) 14px', borderBottom: '2px solid var(--ink)' }}>
         <div
           style={{
@@ -538,6 +601,35 @@ export function StatementPage() {
         />
       )}
 
+      {archiveAsk && (
+        <Sheet title={`أرشفة «${account.name}»؟`} onClose={() => setArchiveAsk(false)}>
+          <p style={{ margin: 0, lineHeight: 1.8 }}>
+            يختفي من قائمة الحسابات ويبقى كشفه وبياناته كما هي، ويظهر في «المؤرشفة» وفي البحث.
+            {!can.seeBalances(profile.role) ? null : ' يبقى رصيده ضمن صافي الأرصدة.'} لا يراه مدخل
+            البيانات حتى يُعاد.
+          </p>
+          {showBalances && fullBalance !== 0 && (
+            <div className="banner banner-warn" role="note">
+              رصيده ليس صفراً:{' '}
+              <strong className="num">{formatAmount(Math.abs(fullBalance))}</strong>{' '}
+              {SIDE_LABEL[balanceSide(fullBalance)]}.
+            </div>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void toggleArchive(true)}
+              disabled={archBusy}
+            >
+              {archBusy ? 'جارٍ…' : 'نعم، أرشفه'}
+            </button>
+            <button type="button" className="btn" onClick={() => setArchiveAsk(false)}>
+              تراجع
+            </button>
+          </div>
+        </Sheet>
+      )}
       {selectedSnap && (
         <EntrySheet
           account={account}
@@ -549,7 +641,14 @@ export function StatementPage() {
           }
           signState={signStateOf(selectedSnap.entry, ledger.links, now)}
           links={ledger.links}
-          onClose={() => setSelected(null)}
+          onClose={() => {
+            setSelected(null);
+            if (eParam) {
+              const next = new URLSearchParams(params);
+              next.delete('e');
+              setParams(next, { replace: true });
+            }
+          }}
           onEdit={() => navigate(`/a/${id}/entry/${selectedSnap.entry.id}`)}
         />
       )}

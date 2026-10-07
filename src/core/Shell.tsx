@@ -1,15 +1,32 @@
 import { NavLink, Outlet } from 'react-router-dom';
+import {
+  NotificationsProvider,
+  useNotifications,
+} from '../features/notifications/ui/NotificationsProvider';
 import { can } from '../features/users/domain/types';
 import { APP_NAME, BrandMark } from '../shared/ui/BrandMark';
 import { Icon } from '../shared/ui/Icon';
 import { useReady } from './session';
 
 export function Shell() {
+  return (
+    <NotificationsProvider>
+      <ShellFrame />
+    </NotificationsProvider>
+  );
+}
+
+function ShellFrame() {
   const { profile, settings } = useReady();
+  const { unread } = useNotifications();
+  const badge = unread > 0 ? (unread > 99 ? '99+' : String(unread)) : null;
   const tabs = [
     { to: '/', label: 'الحسابات', icon: 'ledger' as const, end: true },
     ...(can.manageUsers(profile.role)
       ? [{ to: '/users', label: 'المستخدمون', icon: 'users' as const, end: false }]
+      : []),
+    ...(can.viewNotifications(profile.role)
+      ? [{ to: '/notifications', label: 'التنبيهات', icon: 'bell' as const, end: false, badge }]
       : []),
     {
       to: '/settings',
@@ -29,6 +46,7 @@ export function Shell() {
           {tabs.map((t) => (
             <NavLink key={t.to} to={t.to} end={t.end}>
               {t.label}
+              <TabBadge value={'badge' in t ? t.badge : null} />
             </NavLink>
           ))}
         </nav>
@@ -41,13 +59,23 @@ export function Shell() {
       </main>
       <nav className="tabbar no-print" aria-label="التنقل الرئيسي">
         {tabs.map((t) => (
-          <NavLink key={t.to} to={t.to} end={t.end}>
+          <NavLink key={t.to} to={t.to} end={t.end} className="tab-link">
             <Icon name={t.icon} />
             {t.label}
+            <TabBadge value={'badge' in t ? t.badge : null} />
           </NavLink>
         ))}
       </nav>
     </div>
+  );
+}
+
+function TabBadge({ value }: { value: string | null | undefined }) {
+  if (!value) return null;
+  return (
+    <span className="tab-badge num" aria-label={`${value} غير مقروء`}>
+      {value}
+    </span>
   );
 }
 

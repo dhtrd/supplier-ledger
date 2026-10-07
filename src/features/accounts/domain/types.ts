@@ -12,6 +12,8 @@ export interface Account {
   /** Raw logo bytes (webp/jpeg/png), ≤ 80 KB. */
   logo: Uint8Array | null;
   deleted: boolean;
+  /** Hidden from the daily list (owner decision 2026-10-07); data stays. */
+  archived: boolean;
 }
 
 export const GROUP_LABEL: Record<AccountGroup, string> = {

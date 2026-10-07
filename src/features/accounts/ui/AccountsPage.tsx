@@ -8,17 +8,54 @@ import { balanceSide, formatAmount, normalizeDigits, SIDE_LABEL } from '../../..
 import { useBlobUrl } from '../../../shared/ui/hooks';
 import { sniffMime } from '../../../shared/ui/Logo';
 import { can } from '../../users/domain/types';
-import { accountTotals, getAccounts, listAccounts, type AccountTotals } from '../data/accountsRepo';
+import { todayRiyadh } from '../../../shared/lib/dates';
+import { useToast } from '../../../shared/ui/Toast';
+import {
+  accountTotals,
+  getAccounts,
+  lastMovement,
+  listAccounts,
+  setArchived,
+  type AccountTotals,
+} from '../data/accountsRepo';
+import {
+  ARCHIVE_SUGGEST_DAYS,
+  archiveCandidates,
+  needsLastMovement,
+  SUGGEST_SNOOZE_DAYS,
+} from '../domain/archive';
 import { GROUP_LABEL, initialOf, type Account, type AccountGroup } from '../domain/types';
 
 type Row = Account & { totals: AccountTotals | null };
+type Filter = AccountGroup | 'all' | 'archived';
+
+const SNOOZE_KEY = 'sl:archive-suggest-snooze';
+function snoozed(): boolean {
+  try {
+    return Number(localStorage.getItem(SNOOZE_KEY) ?? 0) > Date.now();
+  } catch {
+    return false;
+  }
+}
+function snooze(): void {
+  try {
+    localStorage.setItem(SNOOZE_KEY, String(Date.now() + SUGGEST_SNOOZE_DAYS * 86_400_000));
+  } catch {
+    /* storage unavailable: the suggestion just comes back next time */
+  }
+}
 
 export function AccountsPage() {
   const { profile, settings } = useReady();
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState('');
   const [q, setQ] = useState('');
-  const [group, setGroup] = useState<AccountGroup | 'all'>('all');
+  const [group, setGroup] = useState<Filter>('all');
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  const [suggest, setSuggest] = useState<string[]>([]);
+  const [archiving, setArchiving] = useState(false);
+  const { user } = useReady();
+  const toast = useToast();
   const isManager = can.manageAccounts(profile.role);
   const assignedKey = profile.assignedAccounts.join(',');
 
@@ -37,8 +74,32 @@ export function AccountsPage() {
         ? await listAccounts(db)
         : await getAccounts(db, assignedKey ? assignedKey.split(',') : []);
       accounts.sort((a, b) => a.name.localeCompare(b.name, 'ar'));
-      const totals = await Promise.all(accounts.map((a) => accountTotals(db, a.id)));
-      if (alive) setRows(accounts.map((a, i) => ({ ...a, totals: totals[i] ?? null })));
+      // Data-entry users never see archived accounts (the rules close their statements).
+      const visible = isManager ? accounts : accounts.filter((a) => !a.archived);
+      const totals = await Promise.all(visible.map((a) => accountTotals(db, a.id)));
+      const loaded = visible.map((a, i) => ({ ...a, totals: totals[i] ?? null }));
+      if (alive) setRows(loaded);
+      // Suggest archiving settled, idle accounts (managers; at most once per snooze).
+      if (!isManager || snoozed()) return;
+      const check = loaded.filter((r) =>
+        needsLastMovement({
+          archived: r.archived,
+          balance: r.totals?.balance ?? 1,
+          count: r.totals?.count ?? 0,
+        }),
+      );
+      const dates = await Promise.all(check.map((r) => lastMovement(db, r.id)));
+      const ids = archiveCandidates(
+        check.map((r, i) => ({
+          id: r.id,
+          archived: r.archived,
+          balance: r.totals?.balance ?? 1,
+          count: r.totals?.count ?? 0,
+          lastDate: dates[i] ?? null,
+        })),
+        todayRiyadh(),
+      );
+      if (alive) setSuggest(ids);
     })().catch((e) => {
       reportError('accounts', e);
       if (alive) setError(errorMessage(e));
@@ -48,18 +109,44 @@ export function AccountsPage() {
     };
   }, [isManager, assignedKey, reloadKey]);
 
-  const filtered = useMemo(() => {
+  const searching = q.trim().length > 0;
+  /** Group + search match, archived included (the net balance counts them). */
+  const matching = useMemo(() => {
     if (!rows) return [];
     const needle = normalizeDigits(q.trim()).toLowerCase();
     return rows.filter(
       (r) =>
-        (group === 'all' || r.group === group) &&
+        (group === 'all' || group === 'archived' || r.group === group) &&
         (!needle || r.name.toLowerCase().includes(needle) || r.phone.includes(needle)),
     );
   }, [rows, q, group]);
+  const archivedRows = matching.filter((r) => r.archived);
+  // Search finds archived accounts too (tagged); otherwise they stay out of the list.
+  const filtered =
+    group === 'archived' ? archivedRows : matching.filter((r) => searching || !r.archived);
+  const archivedCount = rows?.filter((r) => r.archived).length ?? 0;
 
   const showBalances = can.seeBalances(profile.role);
-  const net = filtered.reduce((s, r) => s + (r.totals?.balance ?? 0), 0);
+  const net = matching.reduce((s, r) => s + (r.totals?.balance ?? 0), 0);
+  const suggested = (rows ?? []).filter((r) => suggest.includes(r.id) && !r.archived);
+
+  const archiveSuggested = async () => {
+    setArchiving(true);
+    try {
+      for (const r of suggested) await setArchived(fb().db, user.uid, r, true);
+      setRows(
+        (list) => list?.map((r) => (suggest.includes(r.id) ? { ...r, archived: true } : r)) ?? null,
+      );
+      toast.info(`أُرشف ${suggested.length} حساب. تجدها في «المؤرشفة».`);
+      setSuggest([]);
+    } catch (e) {
+      reportError('archive-suggested', e);
+      toast.error(errorMessage(e));
+      retry();
+    } finally {
+      setArchiving(false);
+    }
+  };
 
   return (
     <>
@@ -100,6 +187,16 @@ export function AccountsPage() {
               {g === 'all' ? 'الكل' : GROUP_LABEL[g]}
             </button>
           ))}
+          {isManager && archivedCount > 0 && (
+            <button
+              type="button"
+              className="pill"
+              aria-pressed={group === 'archived'}
+              onClick={() => setGroup(group === 'archived' ? 'all' : 'archived')}
+            >
+              المؤرشفة <span className="num">{archivedCount}</span>
+            </button>
+          )}
         </div>
       </header>
 
@@ -117,7 +214,9 @@ export function AccountsPage() {
               borderBottom: '1px solid var(--rule)',
             }}
           >
-            <span>{filtered.length} حساب</span>
+            <span>
+              {filtered.length} حساب{group === 'archived' && ' مؤرشف'}
+            </span>
             {showBalances && (
               <span>
                 صافي الأرصدة:{' '}
@@ -127,6 +226,34 @@ export function AccountsPage() {
               </span>
             )}
           </div>
+          {suggested.length > 0 && group !== 'archived' && (
+            <div className="banner banner-warn archive-suggest" role="status">
+              <span>
+                {suggested.length} حساب مسوّى (رصيده صفر) بلا حركة منذ {ARCHIVE_SUGGEST_DAYS} يوماً
+                أو أكثر: {suggested.map((r) => r.name).join('، ')}. أرشفتها تخفيها من القائمة فقط.
+              </span>
+              <span style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={() => void archiveSuggested()}
+                  disabled={archiving}
+                >
+                  {archiving ? 'جارٍ…' : 'أرشفها'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-quiet"
+                  onClick={() => {
+                    snooze();
+                    setSuggest([]);
+                  }}
+                >
+                  لاحقاً
+                </button>
+              </span>
+            </div>
+          )}
           {filtered.length === 0 ? (
             <div className="empty">
               {rows.length === 0
@@ -137,6 +264,23 @@ export function AccountsPage() {
             </div>
           ) : (
             filtered.map((r) => <AccountRow key={r.id} row={r} showBalance={showBalances} />)
+          )}
+          {isManager && group !== 'archived' && !searching && archivedRows.length > 0 && (
+            <>
+              <button
+                type="button"
+                className="fold-btn"
+                aria-expanded={archivedOpen}
+                onClick={() => setArchivedOpen((o) => !o)}
+              >
+                <span aria-hidden="true">{archivedOpen ? '▾' : '◂'}</span> المؤرشفة (
+                <span className="num">{archivedRows.length}</span>)
+              </button>
+              {archivedOpen &&
+                archivedRows.map((r) => (
+                  <AccountRow key={r.id} row={r} showBalance={showBalances} />
+                ))}
+            </>
           )}
         </>
       )}
@@ -149,7 +293,7 @@ function AccountRow({ row, showBalance }: { row: Row; showBalance: boolean }) {
   const bal = row.totals?.balance ?? 0;
   const side = balanceSide(bal);
   return (
-    <Link to={`/a/${row.id}`} className="list-row">
+    <Link to={`/a/${row.id}`} className={`list-row${row.archived ? ' is-archived' : ''}`}>
       <span className="avatar" aria-hidden="true">
         {logo ? <img src={logo} alt="" /> : initialOf(row.name)}
       </span>
@@ -164,6 +308,7 @@ function AccountRow({ row, showBalance }: { row: Row; showBalance: boolean }) {
           }}
         >
           {row.name}
+          {row.archived && <span className="tag-archived">مؤرشف</span>}
         </span>
         <span className="muted num" style={{ display: 'block', fontSize: 13 }}>
           {GROUP_LABEL[row.group]}

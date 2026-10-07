@@ -47,8 +47,15 @@ service cloud.firestore {
     function myRole() { return userDoc().data.role; }
     function isOwner() { return isActive() && myRole() == 'owner'; }
     function isManager() { return isActive() && myRole() in ['owner', 'admin']; }
-    function isEntryFor(accountId) {
+    function isEntryAssigned(accountId) {
       return isActive() && myRole() == 'entry' && accountId in userDoc().data.assignedAccounts;
+    }
+    // Archived accounts are closed to data-entry users (statement, entries,
+    // links) until a manager restores them; only the account card stays
+    // readable so the app knows to hide it instead of showing an error.
+    function isEntryFor(accountId) {
+      return isEntryAssigned(accountId)
+        && get(/databases/$(database)/documents/accounts/$(accountId)).data.get('archived', false) == false;
     }
     function canAccess(accountId) { return isManager() || isEntryFor(accountId); }
     function settings() { return get(/databases/$(database)/documents/settings/app).data; }
@@ -66,6 +73,11 @@ service cloud.firestore {
         && existsAfter(/databases/$(database)/documents/auditLog/$(request.resource.data.auditId))
         && getAfter(/databases/$(database)/documents/auditLog/$(request.resource.data.auditId)).data.actor == request.auth.uid
         && getAfter(/databases/$(database)/documents/auditLog/$(request.resource.data.auditId)).data.path == path;
+    }
+    // …and, where the owner asked for it, a notification for the managers
+    // (same id as the audit record; see /notifications).
+    function notified() {
+      return existsAfter(/databases/$(database)/documents/notifications/$(request.resource.data.auditId));
     }
 
     // ---------- users --------------------------------------------------------
@@ -296,27 +308,72 @@ service cloud.firestore {
     // ---------- audit log (append-only) -------------------------------------
     match /auditLog/{id} {
       allow read: if isManager();
-      allow create: if isActive()
-        && request.resource.data.keys().hasOnly(['actor', 'action', 'path', 'before', 'at'])
+      allow create: if request.resource.data.keys().hasOnly(['actor', 'action', 'path', 'before', 'at'])
         && request.resource.data.actor == request.auth.uid
         && request.resource.data.at == request.time
-        && request.resource.data.action in ['update', 'delete']
-        && request.resource.data.path is string;
+        && request.resource.data.action in ['update', 'delete', 'restore', 'archive', 'unarchive']
+        && request.resource.data.path is string
+        && isActive();
       allow update, delete: if false;
+    }
+
+    // ---------- notifications for the owner and managers -------------------
+    // Written by whoever edits a signed voucher or an invoice, deletes (moves to
+    // the trash) or restores an entry — in the same batch, tied to its audit
+    // record, so it can be neither skipped nor forged. Read state is per user.
+    match /notifications/{id} {
+      function auditAfter() { return getAfter(/databases/$(database)/documents/auditLog/$(id)).data; }
+      function entryPath(d) { return 'accounts/' + d.accountId + '/entries/' + d.entryId; }
+      function validNotification(d) {
+        return d.keys().hasOnly(['kind', 'accountId', 'entryId', 'accountName', 'title', 'changes',
+                                 'actor', 'actorName', 'at', 'readBy'])
+          && d.kind in ['signedEdit', 'invoiceEdit', 'delete', 'restore']
+          && d.accountId is string && d.accountId.size() <= 64
+          && d.entryId is string && d.entryId.size() <= 64
+          && shortText(d.accountName, 120)
+          && shortText(d.title, 120)
+          && d.changes is list && d.changes.size() <= 8
+          && d.actor == request.auth.uid
+          && d.actorName == userDoc().data.name
+          && d.at == request.time
+          && d.readBy == [];
+      }
+      allow read: if isManager();
+      allow create: if validNotification(request.resource.data)
+        && isActive()
+        && auditAfter().actor == request.auth.uid
+        && auditAfter().path == entryPath(request.resource.data)
+        && auditAfter().action == (request.resource.data.kind in ['signedEdit', 'invoiceEdit']
+                                   ? 'update' : request.resource.data.kind)
+        && getAfter(/databases/$(database)/documents/accounts/$(request.resource.data.accountId)/entries/$(request.resource.data.entryId)).data.auditId == id;
+      // Mark as read: add only yourself.
+      allow update: if changed().hasOnly(['readBy'])
+        && isManager()
+        && !(request.auth.uid in resource.data.readBy)
+        && request.resource.data.readBy.size() == resource.data.readBy.size() + 1
+        && request.resource.data.readBy.toSet() == resource.data.readBy.toSet().union([request.auth.uid].toSet());
+      allow delete: if false;
+    }
+
+    // ---------- trash: deleted entries of every account (managers) ----------
+    match /{path=**}/entries/{entryId} {
+      allow list: if isManager();
     }
 
     // ---------- accounts (suppliers / customers) ----------------------------
     match /accounts/{accountId} {
       function validAccount(d) {
         return d.keys().hasOnly(['name', 'phone', 'group', 'logo', 'deleted',
+                                 'archived', 'archivedAt', 'archivedBy', 'auditId',
                                  'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'legacyId'])
+          && d.get('archived', false) is bool
           && shortText(d.name, 120) && d.name.size() > 0
           && d.phone is string && (d.phone == '' || d.phone.matches('^05[0-9]{8}$'))
           && d.group in ['suppliers', 'customers', 'general']
           && (!('logo' in d) || d.logo == null || (d.logo is bytes && d.logo.size() <= 81920))
           && d.deleted is bool;
       }
-      allow get: if canAccess(accountId);
+      allow get: if isManager() || isEntryAssigned(accountId);
       allow list: if isManager();
       allow create: if isManager()
         && validAccount(request.resource.data)
@@ -326,7 +383,22 @@ service cloud.firestore {
         && validAccount(request.resource.data)
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.get('archived', false) == resource.data.get('archived', false)
+        && request.resource.data.get('archivedAt', null) == resource.data.get('archivedAt', null)
+        && request.resource.data.get('archivedBy', null) == resource.data.get('archivedBy', null)
         && touched(request.resource.data);
+      // Archive / restore from the archive (owner and managers), audited.
+      allow update: if isManager()
+        && validAccount(request.resource.data)
+        && changed().hasOnly(['archived', 'archivedAt', 'archivedBy', 'auditId', 'updatedAt', 'updatedBy'])
+        && request.resource.data.archived is bool
+        && request.resource.data.archived != resource.data.get('archived', false)
+        && (request.resource.data.archived
+            ? request.resource.data.archivedAt == request.time
+              && request.resource.data.archivedBy == request.auth.uid
+            : !('archivedAt' in request.resource.data) && !('archivedBy' in request.resource.data))
+        && touched(request.resource.data)
+        && audited('accounts/' + accountId);
       allow delete: if false;
 
       // ---------- entries ----------------------------------------------------
@@ -367,7 +439,25 @@ service cloud.firestore {
             && d.signature.signedAt == get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.signedAt
             // …and only if the recipient signed for exactly this amount/voucher.
             && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.amount == d.amount
-            && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.voucherNo == d.get('voucherNo', null);
+            && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.voucherNo == d.get('voucherNo', null)
+            // …and the link was issued after the entry's last change (an edit
+            // after signing voids the signature; the old link cannot bring it back).
+            && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.createdAt
+               > resource.data.get('updatedAt', resource.data.createdAt);
+        }
+        function sameIdentity() {
+          return request.resource.data.type == resource.data.type
+            && request.resource.data.get('subtype', null) == resource.data.get('subtype', null)
+            && request.resource.data.get('voucherNo', null) == resource.data.get('voucherNo', null)
+            && request.resource.data.createdAt == resource.data.createdAt
+            && request.resource.data.createdBy == resource.data.createdBy;
+        }
+        function entryPath() { return 'accounts/' + accountId + '/entries/' + entryId; }
+        function trashFlip() {
+          return changed().hasOnly(['deleted', 'deletedAt', 'auditId', 'updatedAt', 'updatedBy'])
+            && touched(request.resource.data)
+            && audited(entryPath())
+            && notified();
         }
 
         allow read: if canAccess(accountId);
@@ -382,28 +472,47 @@ service cloud.firestore {
           && (request.resource.data.type != 'payment' || voucherAllocated(request.resource.data))
           && (request.resource.data.type == 'payment' || !('voucherNo' in request.resource.data));
 
-        // Normal edit / soft delete — unsigned entries only, always audited.
-        allow update: if canAccess(accountId)
-          && resource.data.deleted == false
-          && !('signature' in resource.data)
+        // Edit. Editing a signed voucher removes its signature (and link id):
+        // a new link must be sent. Always audited; a signed voucher or an
+        // invoice also notifies the managers.
+        // (Cheap field checks come first in every rule: a batch has a budget of
+        // 1000 evaluated expressions, and the role checks are the expensive part.)
+        allow update: if resource.data.deleted == false
+          && request.resource.data.deleted == false
+          && !('deletedAt' in request.resource.data)
+          && !changed().hasOnly(['signLinkId', 'signature', 'updatedAt', 'updatedBy'])
+          && canAccess(accountId)
           && validEntry(request.resource.data)
-          && request.resource.data.type == resource.data.type
-          && request.resource.data.get('subtype', null) == resource.data.get('subtype', null)
-          && request.resource.data.get('voucherNo', null) == resource.data.get('voucherNo', null)
-          && request.resource.data.createdAt == resource.data.createdAt
-          && request.resource.data.createdBy == resource.data.createdBy
+          && sameIdentity()
           && !('signature' in request.resource.data)
-          && (!('deletedAt' in request.resource.data) || request.resource.data.deletedAt == request.time)
-          && (request.resource.data.deleted == false || 'deletedAt' in request.resource.data)
+          && (('signature' in resource.data)
+              ? !('signLinkId' in request.resource.data)
+              : request.resource.data.get('signLinkId', null) == resource.data.get('signLinkId', null))
           && touched(request.resource.data)
-          && audited('accounts/' + accountId + '/entries/' + entryId);
+          && audited(entryPath())
+          && ((!('signature' in resource.data) && resource.data.type != 'invoice') || notified());
+
+        // Move to the trash (signed vouchers too): nothing else changes, so a
+        // restore brings the entry back exactly as it was. Audited + notified.
+        allow update: if resource.data.deleted == false
+          && request.resource.data.deleted == true
+          && request.resource.data.deletedAt == request.time
+          && canAccess(accountId)
+          && trashFlip();
+
+        // Restore from the trash: owner and managers only.
+        allow update: if resource.data.deleted == true
+          && request.resource.data.deleted == false
+          && !('deletedAt' in request.resource.data)
+          && isManager()
+          && trashFlip();
 
         // Attach the recipient's signature (copied from the signed link).
-        allow update: if canAccess(accountId)
-          && resource.data.type == 'payment'
+        allow update: if resource.data.type == 'payment'
           && resource.data.deleted == false
           && !('signature' in resource.data)
           && changed().hasOnly(['signLinkId', 'signature', 'updatedAt', 'updatedBy'])
+          && canAccess(accountId)
           && signatureFromLink(request.resource.data)
           && touched(request.resource.data);
 

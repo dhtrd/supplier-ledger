@@ -104,14 +104,19 @@ describe('criterion 6 — permissions table', () => {
       setDoc(doc(as('entry'), `accounts/${ACC_A}/entries/n1`), newInvoice('entry')),
     );
   });
-  it('data entry edits and soft-deletes with an audit record', async () => {
+  it('data entry edits an unsigned payment with an audit record; invoice edits and deletes also need a notification', async () => {
     const db = as('entry');
-    const path = `accounts/${ACC_A}/entries/inv1`;
     await assertSucceeds(
-      auditedEdit(db, 'entry', path, { details: 'تعديل', amount: 120000, signed: 120000 }),
+      auditedEdit(db, 'entry', `accounts/${ACC_A}/entries/pay1`, {
+        details: 'تعديل',
+        amount: 120000,
+        signed: -120000,
+      }),
     );
-    await assertSucceeds(
-      auditedEdit(db, 'entry', path, { deleted: true, deletedAt: serverTimestamp() }),
+    const inv = `accounts/${ACC_A}/entries/inv1`;
+    await assertFails(auditedEdit(db, 'entry', inv, { details: 'تعديل' }));
+    await assertFails(
+      auditedEdit(db, 'entry', inv, { deleted: true, deletedAt: serverTimestamp() }),
     );
   });
   it('an edit without an audit record is rejected', async () => {
