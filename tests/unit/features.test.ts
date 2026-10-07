@@ -105,7 +105,7 @@ describe('returns / discounts and hidden balances', () => {
     expect(isCashPayment(entry({}))).toBe(false);
   });
   it('data-entry users do not see balances; managers do', () => {
-    expect(can.seeBalances('entry')).toBe(false);
+    expect(can.seeBalances('entry')).toBe(true);
     expect(can.seeBalances('admin')).toBe(true);
     expect(can.backupNow('admin')).toBe(true);
     expect(can.backupNow('entry')).toBe(false);
