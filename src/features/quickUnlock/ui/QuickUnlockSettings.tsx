@@ -3,6 +3,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { errorMessage, reportError } from '../../../core/errors';
 import { fb } from '../../../core/firebase';
 import { useReady } from '../../../core/session';
+import { PasswordInput } from '../../../shared/ui/PasswordInput';
 import { useToast } from '../../../shared/ui/Toast';
 import { recordFailure } from '../../auth/data/lockoutRepo';
 import { WRONG_PASSWORD_CODES } from '../../auth/domain/lockout';
@@ -189,10 +190,9 @@ export function QuickUnlockSettings() {
           <label htmlFor="qu-pw" style={{ fontSize: 14, fontWeight: 500 }}>
             كلمة المرور الحالية
           </label>
-          <input
+          <PasswordInput
             id="qu-pw"
             className="input"
-            type="password"
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}

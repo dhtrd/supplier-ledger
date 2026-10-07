@@ -944,3 +944,71 @@ textarea.input {
     background: var(--white);
   }
 }
+
+/* ---------- password field with hold-to-reveal (approved «٣») ---------- */
+.pw-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pw-wrap {
+  position: relative;
+}
+.pw-wrap .input {
+  width: 100%;
+  padding-left: 52px;
+}
+.pw-btn {
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.pw-btn:hover {
+  color: var(--ink);
+}
+.pw-btn.on {
+  color: var(--lah);
+  background: #e3efe9;
+}
+.pw-btn:focus-visible {
+  outline: 2.5px solid var(--lah);
+  outline-offset: 2px;
+}
+.pw-timer {
+  height: 3px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.pw-timer i {
+  display: block;
+  height: 100%;
+  background: var(--lah);
+}
+.pw-timer i.full {
+  width: 100%;
+}
+.pw-timer i.run {
+  animation: pw-drain 5s linear forwards;
+}
+@keyframes pw-drain {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0;
+  }
+}

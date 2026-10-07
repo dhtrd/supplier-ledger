@@ -2,6 +2,8 @@ import { sendPasswordResetEmail, signInWithEmailAndPassword } from 'firebase/aut
 import { useEffect, useState, type FormEvent } from 'react';
 import { errorMessage, reportError } from '../../../core/errors';
 import { fb } from '../../../core/firebase';
+import { APP_NAME, BrandMark } from '../../../shared/ui/BrandMark';
+import { PasswordInput } from '../../../shared/ui/PasswordInput';
 import { recordFailure } from '../data/lockoutRepo';
 import { clearLogoutReason, peekLogoutReason } from '../data/logoutReason';
 import { MAX_FAILED_ATTEMPTS, WRONG_PASSWORD_CODES as WRONG_PASSWORD } from '../domain/lockout';
@@ -68,9 +70,10 @@ export function LoginPage() {
   return (
     <main className="center-page">
       <form className="card" onSubmit={submit} noValidate>
-        <div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+          <BrandMark size={72} />
           <div className="serif" style={{ fontSize: 30, lineHeight: 1.3 }}>
-            دفتر الموردين
+            {APP_NAME}
           </div>
           <div className="muted" style={{ fontSize: 14 }}>
             تسجيل الدخول
@@ -92,11 +95,10 @@ export function LoginPage() {
         </div>
         <div className="field">
           <label htmlFor="password">كلمة المرور</label>
-          <input
+          <PasswordInput
             id="password"
             className="input ltr"
             style={{ textAlign: 'right' }}
-            type="password"
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
