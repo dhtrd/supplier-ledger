@@ -43,7 +43,10 @@ export async function listAccounts(db: Firestore): Promise<Account[]> {
 /** Data-entry users read their assigned accounts one by one (they cannot list). */
 export async function getAccounts(db: Firestore, ids: string[]): Promise<Account[]> {
   const snaps = await Promise.all(ids.map((id) => getDoc(doc(db, 'accounts', id))));
-  return snaps.filter((s) => s.exists()).map(toAccount).filter((a) => !a.deleted);
+  return snaps
+    .filter((s) => s.exists())
+    .map(toAccount)
+    .filter((a) => !a.deleted);
 }
 
 export function watchAccount(

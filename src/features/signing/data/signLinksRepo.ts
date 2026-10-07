@@ -179,9 +179,17 @@ export async function syncSignedLink(db: Firestore, uid: string, link: SignLink)
 }
 
 /** Ids of pending links issued for one entry (to revoke them when it changes). */
-export async function pendingLinkIds(db: Firestore, accountId: string, entryId: string): Promise<string[]> {
+export async function pendingLinkIds(
+  db: Firestore,
+  accountId: string,
+  entryId: string,
+): Promise<string[]> {
   const snap = await getDocs(
-    query(collection(db, 'signLinks'), where('accountId', '==', accountId), where('status', '==', 'pending')),
+    query(
+      collection(db, 'signLinks'),
+      where('accountId', '==', accountId),
+      where('status', '==', 'pending'),
+    ),
   );
   return snap.docs.filter((d) => d.get('entryId') === entryId).map((d) => d.id);
 }
