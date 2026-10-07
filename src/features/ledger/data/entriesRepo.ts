@@ -54,6 +54,7 @@ export function toEntry(s: DocumentSnapshot): EntrySnapshot {
       signature,
       createdBy: str(raw.createdBy),
       legacy: typeof raw.legacyId === 'number',
+      subtype: raw.subtype === 'return' || raw.subtype === 'discount' ? raw.subtype : null,
     },
   };
 }
@@ -88,7 +89,10 @@ export async function getEntry(
 
 /** A compressed image ready to store (see shared/lib/image.ts). */
 export interface PreparedImage {
+  /** Original (≤ 300 KB); moved to Dropbox by the nightly job. */
   data: Uint8Array;
+  /** Small preview (≤ 60 KB) that stays in Firestore. */
+  thumb: Uint8Array;
   mime: 'image/webp' | 'image/jpeg';
 }
 
@@ -106,6 +110,7 @@ function writeAttachments(
     const ref = doc(collection(db, 'accounts', accountId, 'attachments'));
     (w.set as (r: DocumentReference, d: object) => void)(ref, {
       data: Bytes.fromUint8Array(f.data),
+      thumb: Bytes.fromUint8Array(f.thumb),
       mime: f.mime,
       size: f.data.byteLength,
       entryId,
@@ -238,10 +243,24 @@ export async function getAttachment(
   db: Firestore,
   accountId: string,
   attachmentId: string,
-): Promise<{ data: Uint8Array; mime: string } | null> {
+): Promise<StoredImage | null> {
   const s = await getDoc(doc(db, 'accounts', accountId, 'attachments', attachmentId));
   if (!s.exists()) return null;
   const d = s.data();
-  const data = d.data instanceof Bytes ? d.data.toUint8Array() : null;
-  return data ? { data, mime: str(d.mime, 'image/jpeg') } : null;
+  const url = str(d.url);
+  return {
+    thumb: d.thumb instanceof Bytes ? d.thumb.toUint8Array() : null,
+    data: d.data instanceof Bytes ? d.data.toUint8Array() : null,
+    // Only Dropbox links written by the backup job are ever opened.
+    url: /^https:\/\/(www\.)?dropbox\.com\//.test(url) ? url : null,
+    mime: str(d.mime, 'image/jpeg'),
+  };
+}
+
+/** What the app can show for an attachment: preview, and the original or its Dropbox link. */
+export interface StoredImage {
+  thumb: Uint8Array | null;
+  data: Uint8Array | null;
+  url: string | null;
+  mime: string;
 }

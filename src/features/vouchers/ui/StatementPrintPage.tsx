@@ -8,7 +8,8 @@ import { Logo } from '../../../shared/ui/Logo';
 import { Money } from '../../../shared/ui/RiyalSign';
 import { GROUP_LABEL } from '../../accounts/domain/types';
 import { buildStatement, fullRange } from '../../ledger/domain/statement';
-import { ENTRY_LABEL } from '../../ledger/domain/types';
+import { entryLabel } from '../../ledger/domain/types';
+import { can } from '../../users/domain/types';
 import { useLedger } from '../../ledger/ui/useLedger';
 import { PrintToolbar } from './VoucherPrintPage';
 import './print.css';
@@ -17,7 +18,8 @@ import './print.css';
 export function StatementPrintPage() {
   const { accountId = '' } = useParams();
   const [params] = useSearchParams();
-  const { user } = useReady();
+  const { user, profile } = useReady();
+  const showBalances = can.seeBalances(profile.role);
   const ledger = useLedger(accountId, user.uid);
   const entries = useMemo(() => (ledger.entries ?? []).map((s) => s.entry), [ledger.entries]);
   const from = params.get('from') ?? '';
@@ -77,25 +79,27 @@ export function StatementPrintPage() {
                 <th>البيان</th>
                 <th className="n">له</th>
                 <th className="n">عليه</th>
-                <th className="n">الرصيد</th>
+                {showBalances && <th className="n">الرصيد</th>}
               </tr>
             </thead>
             <tbody>
-              <tr style={{ fontStyle: 'italic', background: 'var(--band)' }}>
-                <td>{displayDate(statement.range.from)}</td>
-                <td>افتتاحي</td>
-                <td>الرصيد السابق قبل بداية الفترة</td>
-                <td className="n" />
-                <td className="n" />
-                <td className="n">
-                  {formatAmount(Math.abs(statement.opening))} {side(statement.opening)}
-                </td>
-              </tr>
+              {showBalances && (
+                <tr style={{ fontStyle: 'italic', background: 'var(--band)' }}>
+                  <td>{displayDate(statement.range.from)}</td>
+                  <td>افتتاحي</td>
+                  <td>الرصيد السابق قبل بداية الفترة</td>
+                  <td className="n" />
+                  <td className="n" />
+                  <td className="n">
+                    {formatAmount(Math.abs(statement.opening))} {side(statement.opening)}
+                  </td>
+                </tr>
+              )}
               {statement.rows.map(({ entry: e, balance }) => (
                 <tr key={e.id}>
                   <td style={{ whiteSpace: 'nowrap' }}>{displayDate(e.date)}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
-                    {ENTRY_LABEL[e.type]}
+                    {entryLabel(e)}
                     {e.voucherNo !== null && ` ${e.voucherNo}`}
                     {e.signature && ' ✓'}
                   </td>
@@ -106,9 +110,11 @@ export function StatementPrintPage() {
                   <td className="n" style={{ color: 'var(--alayh)' }}>
                     {e.type === 'payment' ? formatAmount(e.amount) : ''}
                   </td>
-                  <td className="n" style={{ fontWeight: 600 }}>
-                    {formatAmount(Math.abs(balance))} {side(balance)}
-                  </td>
+                  {showBalances && (
+                    <td className="n" style={{ fontWeight: 600 }}>
+                      {formatAmount(Math.abs(balance))} {side(balance)}
+                    </td>
+                  )}
                 </tr>
               ))}
               <tr style={{ fontWeight: 600 }}>
@@ -127,24 +133,28 @@ export function StatementPrintPage() {
                 >
                   {formatAmount(statement.totalAlayh)}
                 </td>
-                <td className="n" style={{ borderTop: '2px solid var(--ink)' }}>
-                  {formatAmount(Math.abs(statement.closing))} {side(statement.closing)}
-                </td>
+                {showBalances && (
+                  <td className="n" style={{ borderTop: '2px solid var(--ink)' }}>
+                    {formatAmount(Math.abs(statement.closing))} {side(statement.closing)}
+                  </td>
+                )}
               </tr>
             </tbody>
           </table>
 
-          <div
-            className="row-between"
-            style={{ alignItems: 'baseline', borderTop: '1px solid var(--rule)', paddingTop: 10 }}
-          >
-            <span className="muted" style={{ fontSize: 13 }}>
-              الرصيد في نهاية الفترة
-            </span>
-            <span style={{ fontSize: 22, fontWeight: 600 }}>
-              <Money halalas={statement.closing} abs /> {side(statement.closing)}
-            </span>
-          </div>
+          {showBalances && (
+            <div
+              className="row-between"
+              style={{ alignItems: 'baseline', borderTop: '1px solid var(--rule)', paddingTop: 10 }}
+            >
+              <span className="muted" style={{ fontSize: 13 }}>
+                الرصيد في نهاية الفترة
+              </span>
+              <span style={{ fontSize: 22, fontWeight: 600 }}>
+                <Money halalas={statement.closing} abs /> {side(statement.closing)}
+              </span>
+            </div>
+          )}
         </article>
       </div>
     </>

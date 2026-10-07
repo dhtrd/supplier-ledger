@@ -5,7 +5,7 @@ import { fb } from '../../../core/firebase';
 import { useReady } from '../../../core/session';
 import { ErrorBox, Loading } from '../../../core/Shell';
 import { displayDate, todayRiyadh } from '../../../shared/lib/dates';
-import { compressImage } from '../../../shared/lib/image';
+import { preparePhoto } from '../../../shared/lib/image';
 import { formatAmount } from '../../../shared/lib/money';
 import { CalendarSheet } from '../../../shared/ui/Calendar';
 import { useBlobUrl } from '../../../shared/ui/hooks';
@@ -23,6 +23,7 @@ import {
 } from '../data/entriesRepo';
 import {
   ENTRY_LABEL,
+  entryLabel,
   MAX_ATTACHMENTS,
   MAX_DETAILS,
   validateEntryForm,
@@ -112,7 +113,7 @@ export function EntryFormPage() {
     setProcessing(true);
     try {
       const out: PreparedImage[] = [];
-      for (const f of Array.from(files).slice(0, room)) out.push(await compressImage(f));
+      for (const f of Array.from(files).slice(0, room)) out.push(await preparePhoto(f));
       setAdded((a) => [...a, ...out]);
       if (files.length > room) toast.error(`أُضيفت ${room} فقط؛ الحد ${MAX_ATTACHMENTS} صور.`);
     } catch (e) {
@@ -196,7 +197,9 @@ export function EntryFormPage() {
         </Link>
         <div>
           <h1 className="serif" style={{ margin: 0, fontSize: 22 }}>
-            {isNew ? 'عملية جديدة' : `تعديل ${ENTRY_LABEL[type]}`}
+            {isNew
+              ? 'عملية جديدة'
+              : `تعديل ${current ? entryLabel(current.entry) : ENTRY_LABEL[type]}`}
             {current?.entry.voucherNo != null && (
               <span className="muted num" style={{ fontSize: 16 }}>
                 {' '}

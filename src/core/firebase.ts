@@ -1,4 +1,5 @@
 import { deleteApp, initializeApp, type FirebaseApp } from 'firebase/app';
+import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import { connectAuthEmulator, getAuth, type Auth } from 'firebase/auth';
 import { connectFirestoreEmulator, getFirestore, type Firestore } from 'firebase/firestore';
 import { readConfig, type FirebaseWebConfig } from './config';
@@ -20,6 +21,14 @@ export function firebase(): FirebaseHandles | { missing: string[] } {
   const res = readConfig(import.meta.env);
   if (!res.ok) return { missing: res.missing };
   const app = initializeApp(res.config);
+  // App Check proves requests come from this site (enforce it in the Firebase
+  // console once traffic shows as verified). Skipped against the emulators.
+  const siteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY;
+  if (!useEmulators && typeof siteKey === 'string' && siteKey.trim())
+    initializeAppCheck(app, {
+      provider: new ReCaptchaV3Provider(siteKey.trim()),
+      isTokenAutoRefreshEnabled: true,
+    });
   const auth = getAuth(app);
   // Memory cache only (the default): no ledger data is left in the browser
   // after logout on a shared device.

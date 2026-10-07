@@ -8,7 +8,15 @@ import { useToast } from '../../../shared/ui/Toast';
 import { listAccounts } from '../../accounts/data/accountsRepo';
 import type { Account } from '../../accounts/domain/types';
 import { createUser, listUsers, renameSelf, sendReset, updateUser } from '../data/usersRepo';
-import { can, validateUserForm, type Role, type UserProfile } from '../domain/types';
+import {
+  can,
+  validatePassword,
+  validateUserForm,
+  type Role,
+  type UserProfile,
+} from '../domain/types';
+import { getFailures, unlockAccount } from '../../auth/data/lockoutRepo';
+import { isLocked, MAX_FAILED_ATTEMPTS } from '../../auth/domain/lockout';
 
 type Editing = { mode: 'new' } | { mode: 'edit'; user: UserProfile };
 
@@ -18,6 +26,8 @@ export function UsersPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<Editing | null>(null);
+  // Failed-attempt counters by user id (readable by the owner only).
+  const [fails, setFails] = useState<Record<string, number>>({});
 
   const [reloadKey, setReloadKey] = useState(0);
   const reload = () => {
@@ -29,10 +39,14 @@ export function UsersPage() {
     let alive = true;
     const { db } = fb();
     Promise.all([listUsers(db), listAccounts(db)])
-      .then(([u, a]) => {
+      .then(async ([u, a]) => {
         if (!alive) return;
         setUsers(u);
         setAccounts(a.sort((x, y) => x.name.localeCompare(y.name, 'ar')));
+        if (profile.role === 'owner') {
+          const counts = await Promise.all(u.map((x) => getFailures(db, x.email)));
+          if (alive) setFails(Object.fromEntries(u.map((x, i) => [x.id, counts[i] ?? 0])));
+        }
       })
       .catch((e) => {
         reportError('users', e);
@@ -41,7 +55,7 @@ export function UsersPage() {
     return () => {
       alive = false;
     };
-  }, [reloadKey]);
+  }, [reloadKey, profile.role]);
 
   if (!can.manageUsers(profile.role))
     return <ErrorBox message="إدارة المستخدمين للمالك والإدارة فقط." />;
@@ -117,6 +131,14 @@ export function UsersPage() {
                   {u.active ? 'مفعّل' : 'موقوف'} · <span className="ltr">{u.email}</span>
                 </span>
               </span>
+              {isLocked(fails[u.id] ?? 0) && (
+                <span
+                  className="chip"
+                  style={{ background: 'var(--alayh-bg)', color: 'var(--alayh-ink)' }}
+                >
+                  مقفل
+                </span>
+              )}
               <span className="chip" style={chip(u.role)}>
                 {settings.roleLabels[u.role]}
               </span>
@@ -135,6 +157,7 @@ export function UsersPage() {
         <UserSheet
           editing={editing}
           accounts={accounts}
+          fails={editing.mode === 'edit' ? (fails[editing.user.id] ?? 0) : 0}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -149,11 +172,13 @@ export function UsersPage() {
 function UserSheet({
   editing,
   accounts,
+  fails,
   onClose,
   onSaved,
 }: {
   editing: Editing;
   accounts: Account[];
+  fails: number;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -171,11 +196,21 @@ function UserSheet({
   const [role, setRole] = useState<'admin' | 'entry'>(target?.role === 'admin' ? 'admin' : 'entry');
   const [active, setActive] = useState(target?.active ?? true);
   const [assigned, setAssigned] = useState<string[]>(target?.assignedAccounts ?? []);
-  const [errors, setErrors] = useState<Partial<Record<'name' | 'email', string>>>({});
+  const [password, setPassword] = useState('');
+  const [password2, setPassword2] = useState('');
+  const [errors, setErrors] = useState<Partial<Record<'name' | 'email' | 'password', string>>>({});
   const [busy, setBusy] = useState(false);
 
   const save = async () => {
-    const errs = validateUserForm({ name, email });
+    const errs: Partial<Record<'name' | 'email' | 'password', string>> = validateUserForm({
+      name,
+      email,
+    });
+    if (!target) {
+      const pe = validatePassword(password);
+      if (pe) errs.password = pe;
+      else if (password !== password2) errs.password = 'كلمتا المرور غير متطابقتين.';
+    }
     setErrors(errs);
     if (Object.keys(errs).length) return;
     setBusy(true);
@@ -186,9 +221,14 @@ function UserSheet({
           db,
           me.uid,
           { name, email, role, active, assignedAccounts: assigned },
+          password,
           withSecondaryAuth,
         );
-        toast.info(`أُنشئ المستخدم وأُرسل إلى ${email.trim()} رابط لتعيين كلمة المرور.`);
+        setPassword('');
+        setPassword2('');
+        toast.info(
+          'أُنشئ المستخدم. سلّمه كلمة المرور بنفسك؛ ويغيّرها لاحقاً من «نسيت كلمة المرور».',
+        );
       } else if (isSelf && profile.role === 'owner') {
         await renameSelf(db, me.uid, name);
         toast.info('حُفظ الاسم.');
@@ -214,6 +254,20 @@ function UserSheet({
       reportError('user-reset', e);
       toast.error(errorMessage(e));
     } finally {
+      setBusy(false);
+    }
+  };
+
+  const unlock = async () => {
+    if (!target) return;
+    setBusy(true);
+    try {
+      await unlockAccount(fb().db, me.uid, target.email);
+      toast.info(`فُكّ إيقاف ${target.name}.`);
+      onSaved();
+    } catch (e) {
+      reportError('user-unlock', e);
+      toast.error(errorMessage(e));
       setBusy(false);
     }
   };
@@ -281,12 +335,50 @@ function UserSheet({
           onChange={(e) => setEmail(e.target.value)}
         />
         {errors.email && <div className="error-text">{errors.email}</div>}
-        {!target && (
-          <span className="hint">
-            يصله بريد لتعيين كلمة المرور بنفسه؛ لا تُعرض كلمة المرور لأحد.
-          </span>
-        )}
       </div>
+      {!target && (
+        <div className="field">
+          <label htmlFor="u-pass">كلمة المرور الأولى</label>
+          <input
+            id="u-pass"
+            type="password"
+            autoComplete="new-password"
+            className="input ltr"
+            style={{ background: 'var(--white)', textAlign: 'right' }}
+            value={password}
+            maxLength={128}
+            aria-invalid={!!errors.password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <label htmlFor="u-pass2" className="sr-only">
+            تأكيد كلمة المرور
+          </label>
+          <input
+            id="u-pass2"
+            type="password"
+            autoComplete="new-password"
+            placeholder="أعد كتابتها للتأكيد"
+            className="input ltr"
+            style={{ background: 'var(--white)', textAlign: 'right' }}
+            value={password2}
+            maxLength={128}
+            onChange={(e) => setPassword2(e.target.value)}
+          />
+          {errors.password ? (
+            <div className="error-text">{errors.password}</div>
+          ) : (
+            <span className="hint">10 أحرف على الأقل، فيها حروف وأرقام. لا تُحفظ في البرنامج.</span>
+          )}
+        </div>
+      )}
+      {target && profile.role === 'owner' && isLocked(fails) && (
+        <div className="banner banner-err row-between" role="alert">
+          <span>الحساب مقفل بعد {MAX_FAILED_ATTEMPTS} محاولات فاشلة.</span>
+          <button type="button" className="btn btn-sm" onClick={unlock} disabled={busy}>
+            فك الإيقاف
+          </button>
+        </div>
+      )}
 
       {isOwnerTarget ? (
         <p className="muted" style={{ margin: 0, fontSize: 13, lineHeight: 1.7 }}>

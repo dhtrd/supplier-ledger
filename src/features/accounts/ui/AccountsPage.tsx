@@ -58,6 +58,7 @@ export function AccountsPage() {
     );
   }, [rows, q, group]);
 
+  const showBalances = can.seeBalances(profile.role);
   const net = filtered.reduce((s, r) => s + (r.totals?.balance ?? 0), 0);
 
   return (
@@ -117,12 +118,14 @@ export function AccountsPage() {
             }}
           >
             <span>{filtered.length} حساب</span>
-            <span>
-              صافي الأرصدة:{' '}
-              <strong className={`num ${net >= 0 ? 'lah' : 'alayh'}`}>
-                {formatAmount(Math.abs(net))} {SIDE_LABEL[balanceSide(net)]}
-              </strong>
-            </span>
+            {showBalances && (
+              <span>
+                صافي الأرصدة:{' '}
+                <strong className={`num ${net >= 0 ? 'lah' : 'alayh'}`}>
+                  {formatAmount(Math.abs(net))} {SIDE_LABEL[balanceSide(net)]}
+                </strong>
+              </span>
+            )}
           </div>
           {filtered.length === 0 ? (
             <div className="empty">
@@ -133,7 +136,7 @@ export function AccountsPage() {
                 : 'لا نتائج مطابقة.'}
             </div>
           ) : (
-            filtered.map((r) => <AccountRow key={r.id} row={r} />)
+            filtered.map((r) => <AccountRow key={r.id} row={r} showBalance={showBalances} />)
           )}
         </>
       )}
@@ -141,7 +144,7 @@ export function AccountsPage() {
   );
 }
 
-function AccountRow({ row }: { row: Row }) {
+function AccountRow({ row, showBalance }: { row: Row; showBalance: boolean }) {
   const logo = useBlobUrl(row.logo, sniffMime(row.logo));
   const bal = row.totals?.balance ?? 0;
   const side = balanceSide(bal);
@@ -168,22 +171,24 @@ function AccountRow({ row }: { row: Row }) {
           {row.totals && ` · ${row.totals.count} عملية`}
         </span>
       </span>
-      <span style={{ textAlign: 'left', flex: '0 0 auto' }}>
-        <span
-          className="num"
-          style={{
-            display: 'block',
-            fontWeight: 600,
-            color:
-              side === 'lah' ? 'var(--lah)' : side === 'alayh' ? 'var(--alayh)' : 'var(--muted)',
-          }}
-        >
-          {formatAmount(Math.abs(bal))}
+      {showBalance && (
+        <span style={{ textAlign: 'left', flex: '0 0 auto' }}>
+          <span
+            className="num"
+            style={{
+              display: 'block',
+              fontWeight: 600,
+              color:
+                side === 'lah' ? 'var(--lah)' : side === 'alayh' ? 'var(--alayh)' : 'var(--muted)',
+            }}
+          >
+            {formatAmount(Math.abs(bal))}
+          </span>
+          <span className="muted" style={{ display: 'block', fontSize: 12 }}>
+            {SIDE_LABEL[side]}
+          </span>
         </span>
-        <span className="muted" style={{ display: 'block', fontSize: 12 }}>
-          {SIDE_LABEL[side]}
-        </span>
-      </span>
+      )}
     </Link>
   );
 }

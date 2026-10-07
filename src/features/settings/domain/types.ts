@@ -6,13 +6,24 @@ export interface AppSettings {
   linkMinutes: number;
   payerName: string;
   roleLabels: Record<Role, string>;
+  /** Minutes without activity before the idle countdown starts. */
+  idleMinutes: number;
+  /** Seconds of visible countdown before sign-out / lock. */
+  idleCountdownSeconds: number;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   linkMinutes: 60,
   payerName: 'شركة الضبيبي',
   roleLabels: DEFAULT_ROLE_LABELS,
+  idleMinutes: 30,
+  idleCountdownSeconds: 10,
 };
+
+export const IDLE_MINUTES_MIN = 1;
+export const IDLE_MINUTES_MAX = 240;
+export const COUNTDOWN_MIN = 5;
+export const COUNTDOWN_MAX = 120;
 
 export const LINK_MINUTES_MIN = 5;
 export const LINK_MINUTES_MAX = 1440;
@@ -24,6 +35,18 @@ export function validateSettings(s: AppSettings): string | null {
     s.linkMinutes > LINK_MINUTES_MAX
   )
     return `مدة الرابط بين ${LINK_MINUTES_MIN} و${LINK_MINUTES_MAX} دقيقة.`;
+  if (
+    !Number.isInteger(s.idleMinutes) ||
+    s.idleMinutes < IDLE_MINUTES_MIN ||
+    s.idleMinutes > IDLE_MINUTES_MAX
+  )
+    return `مدة الخمول بين ${IDLE_MINUTES_MIN} و${IDLE_MINUTES_MAX} دقيقة.`;
+  if (
+    !Number.isInteger(s.idleCountdownSeconds) ||
+    s.idleCountdownSeconds < COUNTDOWN_MIN ||
+    s.idleCountdownSeconds > COUNTDOWN_MAX
+  )
+    return `العد التنازلي بين ${COUNTDOWN_MIN} و${COUNTDOWN_MAX} ثانية.`;
   if (!s.payerName.trim()) return 'أدخل اسم الدافع.';
   if (s.payerName.length > 100) return 'اسم الدافع أطول من 100 حرف.';
   for (const r of ['owner', 'admin', 'entry'] as const) {

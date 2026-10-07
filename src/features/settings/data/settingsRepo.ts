@@ -26,6 +26,8 @@ export function watchSettings(
       const labels = (d.roleLabels ?? {}) as Record<string, unknown>;
       next({
         linkMinutes: int(d.linkMinutes, DEFAULT_SETTINGS.linkMinutes),
+        idleMinutes: int(d.idleMinutes, DEFAULT_SETTINGS.idleMinutes),
+        idleCountdownSeconds: int(d.idleCountdownSeconds, DEFAULT_SETTINGS.idleCountdownSeconds),
         payerName: str(d.payerName, DEFAULT_SETTINGS.payerName),
         roleLabels: {
           owner: str(labels.owner, DEFAULT_SETTINGS.roleLabels.owner),
@@ -41,6 +43,8 @@ export function watchSettings(
 export async function saveSettings(db: Firestore, uid: string, s: AppSettings): Promise<void> {
   await updateDoc(doc(db, 'settings', 'app'), {
     linkMinutes: s.linkMinutes,
+    idleMinutes: s.idleMinutes,
+    idleCountdownSeconds: s.idleCountdownSeconds,
     payerName: s.payerName.trim(),
     roleLabels: {
       owner: s.roleLabels.owner.trim(),

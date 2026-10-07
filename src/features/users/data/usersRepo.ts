@@ -17,7 +17,6 @@ import {
 } from 'firebase/firestore';
 import { AppError } from '../../../core/errors';
 import { bool, str, strList } from '../../../shared/lib/firestore';
-import { generateToken } from '../../../shared/lib/token';
 import type { Role, UserProfile } from '../domain/types';
 
 export function toProfile(s: DocumentSnapshot): UserProfile {
@@ -59,20 +58,21 @@ export interface UserInput {
 }
 
 /**
- * Creates the login (on a throw-away secondary auth instance, so the manager
- * stays signed in) and emails the new user a link to set their own password.
- * No password is ever shown or stored by the app.
+ * Creates the login with the initial password the manager typed (on a
+ * throw-away secondary auth instance, so the manager stays signed in). The
+ * password is never stored or logged by the app; later changes go through the
+ * reset email sent to the user's own address.
  */
 export async function createUser(
   db: Firestore,
   actorUid: string,
   input: UserInput,
+  initialPassword: string,
   secondary: <T>(work: (auth: Auth) => Promise<T>) => Promise<T>,
 ): Promise<string> {
   const email = input.email.trim().toLowerCase();
   const uid = await secondary(async (auth) => {
-    const cred = await createUserWithEmailAndPassword(auth, email, generateToken(24));
-    await sendPasswordResetEmail(auth, email);
+    const cred = await createUserWithEmailAndPassword(auth, email, initialPassword);
     await signOut(auth);
     return cred.user.uid;
   });

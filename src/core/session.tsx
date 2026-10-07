@@ -4,6 +4,8 @@ import type { AppSettings } from '../features/settings/domain/types';
 import { watchSettings } from '../features/settings/data/settingsRepo';
 import type { UserProfile } from '../features/users/domain/types';
 import { watchProfile } from '../features/users/data/usersRepo';
+import { clearOwnFailures, getFailures } from '../features/auth/data/lockoutRepo';
+import { isLocked } from '../features/auth/domain/lockout';
 import { errorMessage, reportError } from './errors';
 import { fb } from './firebase';
 
@@ -11,7 +13,7 @@ export type SessionState =
   | { status: 'loading' }
   | { status: 'signedOut' }
   | { status: 'error'; message: string }
-  | { status: 'noProfile' | 'inactive'; user: User }
+  | { status: 'noProfile' | 'inactive' | 'lockedOut'; user: User }
   | { status: 'ready'; user: User; profile: UserProfile; settings: AppSettings };
 
 const Ctx = createContext<SessionState>({ status: 'loading' });
@@ -33,13 +35,25 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setState({ status: 'error', message: errorMessage(e) });
     };
 
-    const stopAuth = onAuthStateChanged(auth, (user) => {
+    let generation = 0;
+    const stopAuth = onAuthStateChanged(auth, async (user) => {
       stopInner();
+      const gen = ++generation;
       if (!user) {
         setState({ status: 'signedOut' });
         return;
       }
       setState({ status: 'loading' });
+      // 5 failed attempts lock the account (enforced by the rules as well).
+      try {
+        const fails = user.email ? await getFailures(db, user.email) : 0;
+        if (gen !== generation) return;
+        if (isLocked(fails)) return setState({ status: 'lockedOut', user });
+        if (fails > 0 && user.email) await clearOwnFailures(db, user.email);
+      } catch (e) {
+        return fail('lockout')(e);
+      }
+      if (gen !== generation) return;
       let profile: UserProfile | null | undefined;
       let settings: AppSettings | undefined;
       const emit = () => {

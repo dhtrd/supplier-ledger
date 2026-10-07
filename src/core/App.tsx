@@ -7,6 +7,7 @@ import { SignPage } from '../features/signing/ui/SignPage';
 import { ToastProvider } from '../shared/ui/Toast';
 import { firebase } from './firebase';
 import { logout, SessionProvider, useSession } from './session';
+import { IdleGuard } from './IdleGuard';
 import { Loading, Shell } from './Shell';
 
 // Less-used screens load on demand to keep the first load small on phones.
@@ -83,31 +84,46 @@ function Private() {
         text={`سجّلت الدخول بالبريد ${s.user.email ?? ''} لكن لم تُنشأ له صلاحيات. راجع المالك أو الإدارة.`}
       />
     );
+  if (s.status === 'lockedOut')
+    return (
+      <Blocked
+        title="الحساب مقفل"
+        text="أُقفل الحساب بعد 5 محاولات دخول فاشلة. يفكّه المالك من صفحة المستخدمين."
+      />
+    );
   if (s.status === 'inactive')
     return (
       <Blocked title="الحساب موقوف" text="أوقفت الإدارة هذا الحساب. راجع المالك أو الإدارة." />
     );
 
+  if (s.status !== 'ready') return null; // unreachable; narrows the type
+
   return (
-    <Suspense fallback={<Loading />}>
-      <Routes>
-        <Route path="/login" element={<Navigate to="/" replace />} />
-        <Route path="/print/voucher/:accountId/:entryId" element={<VoucherPrintPage />} />
-        <Route path="/print/statement/:accountId" element={<StatementPrintPage />} />
-        <Route element={<Shell />}>
-          <Route index element={<AccountsPage />} />
-          <Route path="/a/new" element={<AccountFormPage />} />
-          <Route path="/a/:id" element={<StatementPage />} />
-          <Route path="/a/:id/edit" element={<AccountFormPage />} />
-          <Route path="/a/:id/entry/new" element={<EntryFormPage />} />
-          <Route path="/a/:id/entry/:entryId" element={<EntryFormPage />} />
-          <Route path="/users" element={<UsersPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/audit" element={<AuditPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
-    </Suspense>
+    <IdleGuard
+      idleMinutes={s.settings.idleMinutes}
+      countdownSeconds={s.settings.idleCountdownSeconds}
+      onExpire={() => void logout()}
+    >
+      <Suspense fallback={<Loading />}>
+        <Routes>
+          <Route path="/login" element={<Navigate to="/" replace />} />
+          <Route path="/print/voucher/:accountId/:entryId" element={<VoucherPrintPage />} />
+          <Route path="/print/statement/:accountId" element={<StatementPrintPage />} />
+          <Route element={<Shell />}>
+            <Route index element={<AccountsPage />} />
+            <Route path="/a/new" element={<AccountFormPage />} />
+            <Route path="/a/:id" element={<StatementPage />} />
+            <Route path="/a/:id/edit" element={<AccountFormPage />} />
+            <Route path="/a/:id/entry/new" element={<EntryFormPage />} />
+            <Route path="/a/:id/entry/:entryId" element={<EntryFormPage />} />
+            <Route path="/users" element={<UsersPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/audit" element={<AuditPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </Suspense>
+    </IdleGuard>
   );
 }
 

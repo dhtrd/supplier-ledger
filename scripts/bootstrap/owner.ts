@@ -41,6 +41,8 @@ runMain(async () => {
     if (!settings.exists) {
       tx.set(db.doc('settings/app'), {
         linkMinutes: 60,
+        idleMinutes: 30,
+        idleCountdownSeconds: 10,
         payerName: 'شركة الضبيبي',
         roleLabels: { owner: 'المالك', admin: 'الإدارة', entry: 'مدخل البيانات' },
         ownerUid: user.uid,

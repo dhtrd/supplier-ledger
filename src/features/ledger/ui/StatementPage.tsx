@@ -21,7 +21,7 @@ import { GROUP_LABEL } from '../../accounts/domain/types';
 import { can } from '../../users/domain/types';
 import type { EntrySnapshot } from '../data/entriesRepo';
 import { buildStatement, fullRange } from '../domain/statement';
-import { ENTRY_LABEL, type Entry } from '../domain/types';
+import { entryLabel, isCashPayment, SUBTYPE_LABEL, type Entry } from '../domain/types';
 import { downloadStatementXlsx } from '../export/statementSheet';
 import { EntrySheet } from './EntrySheet';
 import { signStateOf } from './signState';
@@ -60,6 +60,7 @@ export function StatementPage() {
     return <ErrorBox message="الحساب غير موجود أو لا تملك صلاحية عليه." />;
   const account = ledger.account;
 
+  const showBalances = can.seeBalances(profile.role);
   const shown = statement.rows.filter((r) => filter === 'all' || r.entry.type === filter);
   const newestFirst = [...shown].reverse();
   const closingSide = balanceSide(statement.closing);
@@ -77,8 +78,12 @@ export function StatementPage() {
   const exportXlsx = async () => {
     setExporting(true);
     try {
-      await downloadStatementXlsx(account.name, statement);
-      toast.info('صُدِّر الكشف إلى Excel (الأقدم أولاً مع الرصيد الافتتاحي).');
+      await downloadStatementXlsx(account.name, statement, { balances: showBalances });
+      toast.info(
+        showBalances
+          ? 'صُدِّر الكشف إلى Excel (الأقدم أولاً مع الرصيد الافتتاحي).'
+          : 'صُدِّر الكشف إلى Excel (الأقدم أولاً).',
+      );
     } catch (e) {
       reportError('xlsx', e);
       toast.error(`تعذّر التصدير: ${errorMessage(e)}`);
@@ -89,7 +94,7 @@ export function StatementPage() {
 
   const signCell = (e: Entry) => {
     const st = signStateOf(e, ledger.links, now);
-    if (e.type !== 'payment') return null;
+    if (!isCashPayment(e)) return null;
     if (st.kind === 'signed')
       return (
         <span className="lah" style={{ fontSize: 13 }}>
@@ -179,26 +184,28 @@ export function StatementPage() {
               </div>
             </div>
           </div>
-          <div style={{ textAlign: 'left', marginInlineStart: 'auto' }}>
-            <div className="muted" style={{ fontSize: 14 }}>
-              الرصيد في نهاية الفترة
+          {showBalances && (
+            <div style={{ textAlign: 'left', marginInlineStart: 'auto' }}>
+              <div className="muted" style={{ fontSize: 14 }}>
+                الرصيد في نهاية الفترة
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  gap: 8,
+                  justifyContent: 'flex-end',
+                }}
+              >
+                <span style={{ fontSize: desktop ? 40 : 30, fontWeight: 600, color: sideColor }}>
+                  <Money halalas={statement.closing} abs />
+                </span>
+                <span className="side-badge" style={{ color: sideColor }}>
+                  {SIDE_LABEL[closingSide]}
+                </span>
+              </div>
             </div>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'baseline',
-                gap: 8,
-                justifyContent: 'flex-end',
-              }}
-            >
-              <span style={{ fontSize: desktop ? 40 : 30, fontWeight: 600, color: sideColor }}>
-                <Money halalas={statement.closing} abs />
-              </span>
-              <span className="side-badge" style={{ color: sideColor }}>
-                {SIDE_LABEL[closingSide]}
-              </span>
-            </div>
-          </div>
+          )}
         </div>
         <div
           style={{
@@ -270,33 +277,37 @@ export function StatementPage() {
           >
             <thead>
               <tr className="muted" style={{ textAlign: 'right', fontSize: 13 }}>
-                {['التاريخ', 'البيان', 'له', 'عليه', 'الرصيد', ''].map((h, i) => (
-                  <th
-                    key={i}
-                    style={{
-                      padding: '10px 8px',
-                      borderBottom: '2px solid var(--ink)',
-                      fontWeight: 500,
-                      textAlign: i >= 2 && i <= 4 ? 'left' : 'right',
-                    }}
-                  >
-                    {h || <span className="sr-only">إجراءات</span>}
-                  </th>
-                ))}
+                {['التاريخ', 'البيان', 'له', 'عليه', showBalances ? 'الرصيد' : '', ''].map(
+                  (h, i) => (
+                    <th
+                      key={i}
+                      style={{
+                        padding: '10px 8px',
+                        borderBottom: '2px solid var(--ink)',
+                        fontWeight: 500,
+                        textAlign: i >= 2 && i <= 4 ? 'left' : 'right',
+                      }}
+                    >
+                      {h || <span className="sr-only">إجراءات</span>}
+                    </th>
+                  ),
+                )}
               </tr>
             </thead>
             <tbody>
-              <tr className="muted" style={{ fontStyle: 'italic', background: 'var(--band)' }}>
-                <td style={td}>{displayDate(range.from)}</td>
-                <td style={td}>الرصيد السابق (رصيد افتتاحي)</td>
-                <td style={td} />
-                <td style={td} />
-                <td style={{ ...td, textAlign: 'left' }}>
-                  {formatAmount(Math.abs(statement.opening))}{' '}
-                  {SIDE_LABEL[balanceSide(statement.opening)]}
-                </td>
-                <td style={td} />
-              </tr>
+              {showBalances && (
+                <tr className="muted" style={{ fontStyle: 'italic', background: 'var(--band)' }}>
+                  <td style={td}>{displayDate(range.from)}</td>
+                  <td style={td}>الرصيد السابق (رصيد افتتاحي)</td>
+                  <td style={td} />
+                  <td style={td} />
+                  <td style={{ ...td, textAlign: 'left' }}>
+                    {formatAmount(Math.abs(statement.opening))}{' '}
+                    {SIDE_LABEL[balanceSide(statement.opening)]}
+                  </td>
+                  <td style={td} />
+                </tr>
+              )}
               {shown.map(({ entry: e, balance }) => (
                 <tr
                   key={e.id}
@@ -306,12 +317,12 @@ export function StatementPage() {
                 >
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>{displayDate(e.date)}</td>
                   <td style={td}>
-                    {e.type === 'note' && (
+                    {(e.type === 'note' || e.subtype) && (
                       <span
                         className="chip"
                         style={{ background: 'var(--fill)', marginInlineEnd: 6 }}
                       >
-                        ملاحظة
+                        {e.subtype ? SUBTYPE_LABEL[e.subtype] : 'ملاحظة'}
                       </span>
                     )}
                     {e.voucherNo !== null && (
@@ -319,7 +330,7 @@ export function StatementPage() {
                         #{e.voucherNo}
                       </span>
                     )}
-                    {e.details || <span className="muted">{ENTRY_LABEL[e.type]}</span>}
+                    {e.details || <span className="muted">{entryLabel(e)}</span>}
                     {e.attachments.length > 0 && (
                       <span className="muted" style={{ marginInlineStart: 6 }}>
                         <Icon name="clip" size={16} label="مرفقات" />
@@ -333,7 +344,7 @@ export function StatementPage() {
                     {e.type === 'payment' ? formatAmount(e.amount) : ''}
                   </td>
                   <td style={{ ...td, textAlign: 'left', fontWeight: 600 }}>
-                    {formatAmount(balance)}
+                    {showBalances ? formatAmount(balance) : ''}
                   </td>
                   <td style={{ ...td, textAlign: 'left', whiteSpace: 'nowrap' }}>{signCell(e)}</td>
                 </tr>
@@ -348,7 +359,9 @@ export function StatementPage() {
                 <td style={{ ...tdTotal, textAlign: 'left', color: 'var(--alayh)' }}>
                   {formatAmount(statement.totalAlayh)}
                 </td>
-                <td style={{ ...tdTotal, textAlign: 'left' }}>{formatAmount(statement.closing)}</td>
+                <td style={{ ...tdTotal, textAlign: 'left' }}>
+                  {showBalances ? formatAmount(statement.closing) : ''}
+                </td>
                 <td style={tdTotal} />
               </tr>
             </tbody>
@@ -389,10 +402,10 @@ export function StatementPage() {
               <div className="row-between" style={{ alignItems: 'flex-start' }}>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 15, fontWeight: 500, overflowWrap: 'anywhere' }}>
-                    {e.details || ENTRY_LABEL[e.type]}
+                    {e.details || entryLabel(e)}
                   </div>
                   <div className="muted num" style={{ fontSize: 13, marginTop: 2 }}>
-                    {displayDate(e.date)} · {ENTRY_LABEL[e.type]}
+                    {displayDate(e.date)} · {entryLabel(e)}
                     {e.voucherNo !== null && ` #${e.voucherNo}`}
                     {e.attachments.length > 0 && ` · 📎 ${e.attachments.length}`}
                   </div>
@@ -410,38 +423,42 @@ export function StatementPage() {
                       {formatAmount(e.amount)}
                     </div>
                   )}
-                  <div className="muted num" style={{ fontSize: 12 }}>
-                    الرصيد {formatAmount(balance)}
-                  </div>
+                  {showBalances && (
+                    <div className="muted num" style={{ fontSize: 12 }}>
+                      الرصيد {formatAmount(balance)}
+                    </div>
+                  )}
                 </div>
               </div>
-              {e.type === 'payment' && !(e.legacy && !e.signature) && (
+              {isCashPayment(e) && !(e.legacy && !e.signature) && (
                 <div style={{ marginTop: 6 }}>{signCell(e)}</div>
               )}
             </div>
           ))}
-          <div
-            className="row-between muted"
-            style={{
-              padding: '12px var(--gutter)',
-              fontSize: 14,
-              fontStyle: 'italic',
-              borderBottom: '1px solid var(--rule)',
-              background: 'var(--band)',
-            }}
-          >
-            <span>الرصيد الافتتاحي قبل {displayDate(range.from)}</span>
-            <span className="num" style={{ fontWeight: 600 }}>
-              {formatAmount(Math.abs(statement.opening))}{' '}
-              {SIDE_LABEL[balanceSide(statement.opening)]}
-            </span>
-          </div>
+          {showBalances && (
+            <div
+              className="row-between muted"
+              style={{
+                padding: '12px var(--gutter)',
+                fontSize: 14,
+                fontStyle: 'italic',
+                borderBottom: '1px solid var(--rule)',
+                background: 'var(--band)',
+              }}
+            >
+              <span>الرصيد الافتتاحي قبل {displayDate(range.from)}</span>
+              <span className="num" style={{ fontWeight: 600 }}>
+                {formatAmount(Math.abs(statement.opening))}{' '}
+                {SIDE_LABEL[balanceSide(statement.opening)]}
+              </span>
+            </div>
+          )}
           <div
             className="num"
             style={{
               padding: '14px var(--gutter) 24px',
               display: 'grid',
-              gridTemplateColumns: 'repeat(3, minmax(0,1fr))',
+              gridTemplateColumns: `repeat(${showBalances ? 3 : 2}, minmax(0,1fr))`,
               gap: 8,
               fontSize: 13,
             }}
@@ -458,10 +475,12 @@ export function StatementPage() {
                 {formatAmount(statement.totalAlayh)}
               </div>
             </div>
-            <div>
-              <div className="muted">الرصيد</div>
-              <div style={{ fontWeight: 600 }}>{formatAmount(statement.closing)}</div>
-            </div>
+            {showBalances && (
+              <div>
+                <div className="muted">الرصيد</div>
+                <div style={{ fontWeight: 600 }}>{formatAmount(statement.closing)}</div>
+              </div>
+            )}
           </div>
           <div
             className="bottom-actions no-print"
@@ -502,7 +521,9 @@ export function StatementPage() {
           account={account}
           snap={selectedSnap}
           balanceAfter={
-            statement.rows.find((r) => r.entry.id === selectedSnap.entry.id)?.balance ?? null
+            showBalances
+              ? (statement.rows.find((r) => r.entry.id === selectedSnap.entry.id)?.balance ?? null)
+              : null
           }
           signState={signStateOf(selectedSnap.entry, ledger.links, now)}
           links={ledger.links}

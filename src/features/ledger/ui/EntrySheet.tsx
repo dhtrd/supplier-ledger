@@ -18,8 +18,13 @@ import {
   revokeLink,
   type SignLink,
 } from '../../signing/data/signLinksRepo';
-import { deleteEntry, getAttachment, type EntrySnapshot } from '../data/entriesRepo';
-import { ENTRY_LABEL, isLocked } from '../domain/types';
+import {
+  deleteEntry,
+  getAttachment,
+  type EntrySnapshot,
+  type StoredImage,
+} from '../data/entriesRepo';
+import { entryLabel, isCashPayment, isLocked } from '../domain/types';
 import type { SignState } from './signState';
 
 export function EntrySheet({
@@ -55,7 +60,7 @@ export function EntrySheet({
         .filter((l) => l.entryId === e.id && l.status === 'pending')
         .map((l) => l.id);
       await deleteEntry(fb().db, user.uid, account.id, snap, open);
-      toast.info(`حُذفت ${ENTRY_LABEL[e.type]} وسُجّل الحذف في سجل التعديلات.`);
+      toast.info(`حُذفت العملية (${entryLabel(e)}) وسُجّل الحذف في سجل التعديلات.`);
       onClose();
     } catch (err) {
       reportError('delete-entry', err);
@@ -123,11 +128,12 @@ export function EntrySheet({
     }
   };
 
-  const title = e.voucherNo !== null ? `سند دفعة ${e.voucherNo}` : ENTRY_LABEL[e.type];
+  const title =
+    isCashPayment(e) && e.voucherNo !== null ? `سند دفعة ${e.voucherNo}` : entryLabel(e);
 
   if (confirmDelete)
     return (
-      <Sheet title={`حذف ${ENTRY_LABEL[e.type]}؟`} onClose={() => setConfirmDelete(false)}>
+      <Sheet title={`حذف ${entryLabel(e)}؟`} onClose={() => setConfirmDelete(false)}>
         <p style={{ margin: 0, lineHeight: 1.8 }}>
           ستختفي من الكشف ويتغير الرصيد. تبقى نسخة في سجل التعديلات والنسخ الاحتياطي.
         </p>
@@ -161,7 +167,7 @@ export function EntrySheet({
           gap: 6,
         }}
       >
-        {e.type === 'payment' && (
+        {isCashPayment(e) && (
           <div>
             صُرف إلى: <strong>{account.name}</strong>
           </div>
@@ -193,7 +199,7 @@ export function EntrySheet({
 
       {e.attachments.length > 0 && <Attachments accountId={account.id} ids={e.attachments} />}
 
-      {e.type === 'payment' && (
+      {isCashPayment(e) && (
         <div
           style={{
             borderTop: '1px solid var(--rule)',
@@ -291,7 +297,7 @@ export function EntrySheet({
           paddingTop: 12,
         }}
       >
-        {e.type === 'payment' && (
+        {isCashPayment(e) && (
           <Link className="btn" to={`/print/voucher/${account.id}/${e.id}`}>
             طباعة السند
           </Link>
@@ -348,7 +354,7 @@ function Attachments({ accountId, ids }: { accountId: string; ids: string[] }) {
 }
 
 export function AttachmentView({ accountId, id }: { accountId: string; id: string }) {
-  const [img, setImg] = useState<{ data: Uint8Array; mime: string } | null | undefined>(undefined);
+  const [img, setImg] = useState<StoredImage | null | undefined>(undefined);
   const [error, setError] = useState('');
   useEffect(() => {
     getAttachment(fb().db, accountId, id)
@@ -358,7 +364,9 @@ export function AttachmentView({ accountId, id }: { accountId: string; id: strin
         setError(errorMessage(e));
       });
   }, [accountId, id]);
-  const url = useBlobUrl(img?.data, img?.mime);
+  // Show the original while it is still in the database, otherwise the preview.
+  const shown = useBlobUrl(img?.data ?? img?.thumb, img?.mime);
+  const original = useBlobUrl(img?.data, img?.mime);
   if (error) return <div className="error-text">{error}</div>;
   if (img === undefined)
     return (
@@ -366,11 +374,12 @@ export function AttachmentView({ accountId, id }: { accountId: string; id: strin
         جارٍ تحميل الصورة…
       </div>
     );
-  if (!url) return <div className="error-text">الصورة غير موجودة.</div>;
+  if (!shown) return <div className="error-text">الصورة غير موجودة.</div>;
+  const fullHref = original ?? img?.url ?? null;
   return (
-    <a href={url} target="_blank" rel="noopener noreferrer">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <img
-        src={url}
+        src={shown}
         alt="مرفق العملية"
         style={{
           width: '100%',
@@ -381,6 +390,13 @@ export function AttachmentView({ accountId, id }: { accountId: string; id: strin
           background: 'var(--white)',
         }}
       />
-    </a>
+      {fullHref ? (
+        <a className="btn btn-sm" href={fullHref} target="_blank" rel="noopener noreferrer">
+          {original ? 'فتح الصورة بالحجم الكامل' : 'فتح الصورة الأصلية (Dropbox)'}
+        </a>
+      ) : (
+        <span className="hint">تظهر نسخة مصغّرة؛ الأصل غير متاح.</span>
+      )}
+    </div>
   );
 }

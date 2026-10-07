@@ -77,3 +77,18 @@ export async function compressImage(
   }
   throw new AppError('تعذّر ضغط الصورة إلى الحجم المسموح.');
 }
+
+export interface PreparedPhoto {
+  /** Original for viewing/printing (≤ 300 KB). */
+  data: Uint8Array;
+  /** Preview kept in the database for good (≤ 40 KB, 480 px). */
+  thumb: Uint8Array;
+  mime: CompressedImage['mime'];
+}
+
+/** Original + thumbnail in one step (the thumbnail stays in Firestore). */
+export async function preparePhoto(file: Blob): Promise<PreparedPhoto> {
+  const original = await compressImage(file);
+  const thumb = await compressImage(file, { maxBytes: 40 * 1024, maxSide: 480 });
+  return { data: original.data, thumb: thumb.data, mime: original.mime };
+}

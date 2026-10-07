@@ -2,6 +2,15 @@ import { sendPasswordResetEmail, signInWithEmailAndPassword } from 'firebase/aut
 import { useState, type FormEvent } from 'react';
 import { errorMessage, reportError } from '../../../core/errors';
 import { fb } from '../../../core/firebase';
+import { recordFailure } from '../data/lockoutRepo';
+import { MAX_FAILED_ATTEMPTS } from '../domain/lockout';
+
+const WRONG_PASSWORD = new Set([
+  'auth/invalid-credential',
+  'auth/wrong-password',
+  'auth/user-not-found',
+  'auth/invalid-login-credentials',
+]);
 
 export function LoginPage() {
   const [email, setEmail] = useState('');
@@ -20,7 +29,22 @@ export function LoginPage() {
       await signInWithEmailAndPassword(fb().auth, email.trim(), password);
     } catch (err) {
       reportError('login', err);
-      setError(errorMessage(err));
+      const code = err && typeof err === 'object' && 'code' in err ? String(err.code) : '';
+      if (WRONG_PASSWORD.has(code)) {
+        // Count the failure (rules lock the account at 5). The counter cannot
+        // grow past 5, so a refused write means the account is already locked.
+        try {
+          await recordFailure(fb().db, email);
+          setError(
+            `البريد أو كلمة المرور غير صحيحة. بعد ${MAX_FAILED_ATTEMPTS} محاولات فاشلة يُقفل الحساب ولا يفتحه إلا المالك.`,
+          );
+        } catch (e2) {
+          reportError('login-failure-count', e2);
+          setError(
+            'البريد أو كلمة المرور غير صحيحة، وقد يكون الحساب مقفلاً بعد محاولات فاشلة. راجع المالك.',
+          );
+        }
+      } else setError(errorMessage(err));
     } finally {
       setBusy(false);
     }

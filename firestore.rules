@@ -13,10 +13,22 @@ service cloud.firestore {
     function docPath(p) { return /databases/$(database)/documents/$(p); }
     function signedIn() { return request.auth != null; }
     function userDoc() { return get(/databases/$(database)/documents/users/$(request.auth.uid)); }
+    // Lockout key = sha256(lower(email)) as hex; the app computes the same value.
+    function emailKey() {
+      return hashing.sha256(request.auth.token.get('email', '').lower()).toHexString().lower();
+    }
+    // 5 failed sign-in / PIN attempts lock the account for EVERY role (owner
+    // included) until the owner — or, for the owner, the Firebase console —
+    // resets the counter.
+    function lockedOut() {
+      return exists(/databases/$(database)/documents/lockouts/$(emailKey()))
+        && get(/databases/$(database)/documents/lockouts/$(emailKey())).data.fails >= 5;
+    }
     function isActive() {
       return signedIn()
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && userDoc().data.active == true;
+        && userDoc().data.active == true
+        && !lockedOut();
     }
     function myRole() { return userDoc().data.role; }
     function isOwner() { return isActive() && myRole() == 'owner'; }
@@ -82,9 +94,15 @@ service cloud.firestore {
     match /settings/app {
       allow get: if isActive();
       allow update: if isOwner()
-        && changed().hasOnly(['linkMinutes', 'payerName', 'roleLabels', 'updatedAt', 'updatedBy'])
+        && changed().hasOnly(['linkMinutes', 'payerName', 'roleLabels', 'idleMinutes',
+                              'idleCountdownSeconds', 'updatedAt', 'updatedBy'])
         && request.resource.data.linkMinutes is int
         && request.resource.data.linkMinutes >= 5 && request.resource.data.linkMinutes <= 1440
+        && request.resource.data.idleMinutes is int
+        && request.resource.data.idleMinutes >= 1 && request.resource.data.idleMinutes <= 240
+        && request.resource.data.idleCountdownSeconds is int
+        && request.resource.data.idleCountdownSeconds >= 5
+        && request.resource.data.idleCountdownSeconds <= 120
         && shortText(request.resource.data.payerName, 100)
         && request.resource.data.roleLabels.keys().hasOnly(['owner', 'admin', 'entry'])
         && shortText(request.resource.data.roleLabels.owner, 40)
@@ -98,6 +116,43 @@ service cloud.firestore {
     match /meta/{doc} {
       allow get: if isOwner();
       allow write: if false;
+    }
+
+    // ---------- failed sign-in counter (per email hash) ----------------------
+    match /lockouts/{key} {
+      function failOnly() {
+        return changed().hasOnly(['fails', 'lastFailAt'])
+          && request.resource.data.lastFailAt == request.time;
+      }
+      allow get: if isOwner() || (signedIn() && key == emailKey());
+      // Anyone (the login page is unauthenticated) may add exactly one failure.
+      allow create: if key.matches('^[0-9a-f]{64}$')
+        && request.resource.data.keys().hasOnly(['fails', 'lastFailAt'])
+        && request.resource.data.fails == 1
+        && request.resource.data.lastFailAt == request.time;
+      allow update: if resource.data.fails < 5 && failOnly()
+        && request.resource.data.fails == resource.data.fails + 1;
+      // A successful sign-in clears its own counter (only while not locked).
+      allow update: if signedIn() && key == emailKey() && resource.data.fails < 5
+        && changed().hasOnly(['fails']) && request.resource.data.fails == 0;
+      // The owner unlocks anyone else.
+      allow update: if isOwner()
+        && changed().hasOnly(['fails', 'unlockedAt', 'unlockedBy'])
+        && request.resource.data.fails == 0
+        && request.resource.data.unlockedAt == request.time
+        && request.resource.data.unlockedBy == request.auth.uid;
+      allow delete: if false;
+    }
+
+    // ---------- on-demand backup requests (picked up by GitHub Actions) ------
+    match /backupRequests/{id} {
+      allow read: if isManager();
+      allow create: if isManager()
+        && request.resource.data.keys().hasOnly(['requestedBy', 'requestedAt', 'status'])
+        && request.resource.data.requestedBy == request.auth.uid
+        && request.resource.data.requestedAt == request.time
+        && request.resource.data.status == 'pending';
+      allow update, delete: if false;
     }
 
     // ---------- voucher counter ---------------------------------------------
@@ -148,9 +203,9 @@ service cloud.firestore {
       // ---------- entries ----------------------------------------------------
       match /entries/{entryId} {
         function validEntry(d) {
-          return d.keys().hasOnly(['type', 'amount', 'signed', 'date', 'details', 'attachments',
-                                   'voucherNo', 'signLinkId', 'signature', 'deleted', 'deletedAt',
-                                   'auditId', 'legacyId',
+          return d.keys().hasOnly(['type', 'subtype', 'amount', 'signed', 'date', 'details',
+                                   'attachments', 'voucherNo', 'signLinkId', 'signature', 'deleted',
+                                   'deletedAt', 'auditId', 'legacyId',
                                    'createdAt', 'createdBy', 'updatedAt', 'updatedBy'])
             && d.type in ['invoice', 'payment', 'note']
             && d.amount is int && d.amount >= 0 && d.amount <= 100000000000
@@ -160,6 +215,8 @@ service cloud.firestore {
             && isDate(d.date)
             && shortText(d.details, 500)
             && d.attachments is list && d.attachments.size() <= 5
+            // A payment may be marked as a return (مرتجع) or a discount (خصم).
+            && (!('subtype' in d) || (d.type == 'payment' && d.subtype in ['return', 'discount']))
             && d.deleted is bool;
         }
         function voucherAllocated(d) {
@@ -202,6 +259,7 @@ service cloud.firestore {
           && !('signature' in resource.data)
           && validEntry(request.resource.data)
           && request.resource.data.type == resource.data.type
+          && request.resource.data.get('subtype', null) == resource.data.get('subtype', null)
           && request.resource.data.get('voucherNo', null) == resource.data.get('voucherNo', null)
           && request.resource.data.createdAt == resource.data.createdAt
           && request.resource.data.createdBy == resource.data.createdBy
@@ -223,13 +281,18 @@ service cloud.firestore {
         allow delete: if false;
       }
 
-      // ---------- attachments (compressed images, ≤ 300 KB) ----------------
+      // ---------- attachments --------------------------------------------
+      // A small thumbnail (≤ 60 KB) stays here for good; the original (≤ 300 KB)
+      // is moved to the owner's Dropbox by the nightly job (Admin SDK), which
+      // replaces `data` with a view link.
       match /attachments/{attId} {
         allow read: if canAccess(accountId);
         allow create: if canAccess(accountId)
-          && request.resource.data.keys().hasOnly(['data', 'mime', 'size', 'entryId', 'createdAt', 'createdBy'])
+          && request.resource.data.keys().hasOnly(['data', 'thumb', 'mime', 'size', 'entryId', 'createdAt', 'createdBy'])
           && request.resource.data.data is bytes
           && request.resource.data.data.size() <= 307200
+          && request.resource.data.thumb is bytes
+          && request.resource.data.thumb.size() <= 61440
           && request.resource.data.size == request.resource.data.data.size()
           && request.resource.data.mime in ['image/webp', 'image/jpeg']
           && request.resource.data.entryId is string
@@ -267,6 +330,7 @@ service cloud.firestore {
         && request.resource.data.ttlMinutes == settings().linkMinutes
         && entryAt(request.resource.data).type == 'payment'
         && entryAt(request.resource.data).deleted == false
+        && !('subtype' in entryAt(request.resource.data))
         && !('signature' in entryAt(request.resource.data))
         && entryAt(request.resource.data).amount == request.resource.data.amount
         && entryAt(request.resource.data).voucherNo == request.resource.data.voucherNo

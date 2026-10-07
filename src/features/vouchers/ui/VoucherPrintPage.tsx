@@ -10,6 +10,8 @@ import { Logo } from '../../../shared/ui/Logo';
 import { Money } from '../../../shared/ui/RiyalSign';
 import { buildStatement, fullRange } from '../../ledger/domain/statement';
 import { useLedger } from '../../ledger/ui/useLedger';
+import { isCashPayment } from '../../ledger/domain/types';
+import { can } from '../../users/domain/types';
 import './print.css';
 
 export function PrintToolbar({ back, children }: { back: string; children?: ReactNode }) {
@@ -30,7 +32,7 @@ export function PrintToolbar({ back, children }: { back: string; children?: Reac
 /** A4 payment voucher, branded with the supplier/customer (approved mockup «VoucherA4»). */
 export function VoucherPrintPage() {
   const { accountId = '', entryId = '' } = useParams();
-  const { user, settings } = useReady();
+  const { user, settings, profile } = useReady();
   const ledger = useLedger(accountId, user.uid);
   const entries = useMemo(() => (ledger.entries ?? []).map((s) => s.entry), [ledger.entries]);
   const statement = useMemo(
@@ -42,8 +44,7 @@ export function VoucherPrintPage() {
   if (ledger.account === undefined || ledger.entries === undefined) return <Loading />;
   const account = ledger.account;
   const row = statement.rows.find((r) => r.entry.id === entryId);
-  if (!account || !row || row.entry.type !== 'payment')
-    return <ErrorBox message="السند غير موجود." />;
+  if (!account || !row || !isCashPayment(row.entry)) return <ErrorBox message="السند غير موجود." />;
   const e = row.entry;
   const sig = e.signature;
 
@@ -106,16 +107,23 @@ export function VoucherPrintPage() {
             >
               <Side label="رقم السند" value={<span className="num">{e.voucherNo}</span>} />
               <Side label="التاريخ" value={<span className="num">{displayDate(e.date)}</span>} />
-              <Side label="البيان" value={e.details || '—'} plain />
               <Side
-                label="الرصيد بعد السند"
-                value={
-                  <span className="num">
-                    {formatAmount(Math.abs(row.balance))} {SIDE_LABEL[balanceSide(row.balance)]}
-                  </span>
-                }
-                last
+                label="البيان"
+                value={e.details || '—'}
+                plain
+                last={!can.seeBalances(profile.role)}
               />
+              {can.seeBalances(profile.role) && (
+                <Side
+                  label="الرصيد بعد السند"
+                  value={
+                    <span className="num">
+                      {formatAmount(Math.abs(row.balance))} {SIDE_LABEL[balanceSide(row.balance)]}
+                    </span>
+                  }
+                  last
+                />
+              )}
             </aside>
           </div>
 

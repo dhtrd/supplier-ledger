@@ -5,10 +5,15 @@ import { fb } from '../../../core/firebase';
 import { logout, useReady } from '../../../core/session';
 import { useToast } from '../../../shared/ui/Toast';
 import { can } from '../../users/domain/types';
+import { BackupNow } from '../../backup/ui/BackupNow';
 import { getBackupMeta, saveSettings, type BackupMeta } from '../data/settingsRepo';
 import {
   ageLabel,
   backupState,
+  COUNTDOWN_MAX,
+  COUNTDOWN_MIN,
+  IDLE_MINUTES_MAX,
+  IDLE_MINUTES_MIN,
   LINK_MINUTES_MAX,
   LINK_MINUTES_MIN,
   validateSettings,
@@ -37,6 +42,7 @@ export function SettingsPage() {
       </header>
       <div className="pad stack" style={{ maxWidth: 640, gap: 22 }}>
         {isOwner && <OwnerSettings />}
+        {can.backupNow(profile.role) && <BackupNow />}
         {can.viewAudit(profile.role) && (
           <Link to="/audit" className="btn" style={{ justifyContent: 'space-between' }}>
             سجل التعديلات والحذف
@@ -196,6 +202,34 @@ function OwnerSettings() {
 
       <section className="stack" style={{ gap: 10 }}>
         <h2 className="serif" style={{ margin: 0, fontSize: 20 }}>
+          الخمول والخروج التلقائي
+        </h2>
+        <Stepper
+          label="مدة الخمول قبل التنبيه"
+          unit="دقيقة"
+          value={draft.idleMinutes}
+          step={5}
+          min={IDLE_MINUTES_MIN}
+          max={IDLE_MINUTES_MAX}
+          onChange={(v) => setDraft({ ...draft, idleMinutes: v })}
+        />
+        <Stepper
+          label="العد التنازلي قبل الخروج"
+          unit="ثانية"
+          value={draft.idleCountdownSeconds}
+          step={5}
+          min={COUNTDOWN_MIN}
+          max={COUNTDOWN_MAX}
+          onChange={(v) => setDraft({ ...draft, idleCountdownSeconds: v })}
+        />
+        <p className="hint" style={{ margin: 0 }}>
+          تنطبق على كل المستخدمين. عند انتهاء العد يُسجَّل الخروج، أو تُقفل الشاشة إن فعّل المستخدم
+          الدخول السريع على جهازه.
+        </p>
+      </section>
+
+      <section className="stack" style={{ gap: 10 }}>
+        <h2 className="serif" style={{ margin: 0, fontSize: 20 }}>
           مسميات الأدوار
         </h2>
         <p className="hint" style={{ margin: 0 }}>
@@ -322,5 +356,70 @@ function OwnerSettings() {
         )}
       </section>
     </>
+  );
+}
+
+function Stepper({
+  label,
+  unit,
+  value,
+  step,
+  min,
+  max,
+  onChange,
+}: {
+  label: string;
+  unit: string;
+  value: number;
+  step: number;
+  min: number;
+  max: number;
+  onChange: (v: number) => void;
+}) {
+  const set = (v: number) => onChange(Math.min(max, Math.max(min, v)));
+  // Snap to the step grid so ± lands on round numbers (5, 10, 15 …).
+  const down = () => set(value % step ? value - (value % step) : value - step);
+  const up = () => set(value % step ? value + (step - (value % step)) : value + step);
+  return (
+    <div
+      className="row-between"
+      style={{
+        padding: '10px 12px',
+        border: '1.5px solid var(--rule)',
+        borderRadius: 12,
+        background: 'var(--white)',
+      }}
+    >
+      <span style={{ fontSize: 14 }}>{label}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <button
+          type="button"
+          className="icon-btn"
+          style={{ border: '1px solid var(--rule)', width: 40, height: 40, fontSize: 20 }}
+          aria-label={`إنقاص ${label}`}
+          onClick={down}
+          disabled={value <= min}
+        >
+          −
+        </button>
+        <span
+          className="num"
+          style={{ minWidth: 84, textAlign: 'center', fontSize: 17, fontWeight: 600 }}
+          aria-live="polite"
+        >
+          {value} {unit}
+        </span>
+        <button
+          type="button"
+          className="icon-btn"
+          style={{ border: '1px solid var(--rule)', width: 40, height: 40, fontSize: 20 }}
+          aria-label={`زيادة ${label}`}
+          onClick={up}
+          disabled={value >= max}
+        >
+          +
+        </button>
+      </div>
+    </div>
   );
 }

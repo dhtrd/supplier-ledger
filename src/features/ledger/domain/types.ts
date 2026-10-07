@@ -20,8 +20,27 @@ export interface Entry extends StatementInput {
   voucherNo: number | null;
   signature: Signature | null;
   createdBy: string;
-  /** Migrated from the old «دفتر الحسابات» app. */
+  /** Migrated from the old «دفتر الحسابات» app (or an imported statement). */
   legacy: boolean;
+  /** A payment that is really a supplier return or an earned discount. */
+  subtype: PaymentSubtype | null;
+}
+
+export type PaymentSubtype = 'return' | 'discount';
+
+export const SUBTYPE_LABEL: Record<PaymentSubtype, string> = {
+  return: 'مرتجع',
+  discount: 'خصم',
+};
+
+/** Label shown for an entry: «مرتجع» / «خصم» replace «دفعة» when marked. */
+export function entryLabel(e: Pick<Entry, 'type' | 'subtype'>): string {
+  return e.subtype ? SUBTYPE_LABEL[e.subtype] : ENTRY_LABEL[e.type];
+}
+
+/** Returns/discounts are not cash handed over: no signing link, no payment voucher. */
+export function isCashPayment(e: Pick<Entry, 'type' | 'subtype'>): boolean {
+  return e.type === 'payment' && e.subtype === null;
 }
 
 export const ENTRY_LABEL: Record<EntryType, string> = {

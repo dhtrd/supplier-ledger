@@ -34,6 +34,13 @@ import {
   saveSettings,
 } from '../../src/features/settings/data/settingsRepo';
 import { DEFAULT_SETTINGS } from '../../src/features/settings/domain/types';
+import {
+  clearOwnFailures,
+  getFailures,
+  recordFailure,
+  unlockAccount,
+} from '../../src/features/auth/data/lockoutRepo';
+import { listBackupRequests, requestBackup } from '../../src/features/backup/data/backupRepo';
 
 let env: RulesTestEnvironment;
 const as = (uid: string) => env.authenticatedContext(uid).firestore() as unknown as Firestore;
@@ -106,13 +113,14 @@ describe('entries', () => {
       'entry',
       ACC_A,
       { type: 'invoice', amount: 9900, signed: 9900, date: '2026-10-02', details: 'فاتورة 1' },
-      [{ data: new Uint8Array(2048), mime: 'image/webp' }],
+      [{ data: new Uint8Array(2048), thumb: new Uint8Array(512), mime: 'image/webp' }],
     );
     expect(inv.voucherNo).toBeNull();
     const snap = await getEntry(db, ACC_A, inv.id);
     expect(snap?.entry.attachments).toHaveLength(1);
     const att = await getAttachment(db, ACC_A, snap!.entry.attachments[0]!);
-    expect(att?.data.byteLength).toBe(2048);
+    expect(att?.data?.byteLength).toBe(2048);
+    expect(att?.thumb?.byteLength).toBe(512);
     await createEntry(
       db,
       'entry',
@@ -282,5 +290,105 @@ describe('users and settings', () => {
     expect((await getBackupMeta(as('owner'))).lastBackupMs).not.toBeNull();
     await assertFails(getBackupMeta(as('admin')));
     expect((await getDocs(collection(as('owner'), 'users'))).size).toBe(4);
+  });
+});
+
+describe('5 failed attempts lock the account (all roles)', () => {
+  const withEmail = (uid: string) =>
+    env
+      .authenticatedContext(uid, { email: `${uid}@example.com` })
+      .firestore() as unknown as Firestore;
+
+  it('anonymous failures count to 5 and no further; a locked user loses all access', async () => {
+    for (let i = 0; i < 5; i++) await recordFailure(anon(), 'Entry@Example.com');
+    await assertFails(recordFailure(anon(), 'entry@example.com'));
+    const me = withEmail('entry');
+    expect(await getFailures(me, 'entry@example.com')).toBe(5);
+    await assertFails(getAccounts(me, [ACC_A]));
+    await assertFails(clearOwnFailures(me, 'entry@example.com'));
+    // The owner unlocks; access returns.
+    await unlockAccount(withEmail('owner'), 'owner', 'entry@example.com');
+    expect((await getAccounts(me, [ACC_A])).length).toBe(1);
+  });
+
+  it('applies to the owner too; only the console (Admin) can unlock the owner', async () => {
+    for (let i = 0; i < 5; i++) await recordFailure(anon(), 'owner@example.com');
+    const owner = withEmail('owner');
+    await assertFails(listAccounts(owner));
+    await assertFails(unlockAccount(owner, 'owner', 'owner@example.com'));
+  });
+
+  it('a successful sign-in clears its own counter; others cannot read or reset it', async () => {
+    await recordFailure(anon(), 'admin@example.com');
+    await recordFailure(anon(), 'admin@example.com');
+    await assertFails(getFailures(withEmail('entry'), 'admin@example.com'));
+    await assertFails(unlockAccount(withEmail('entry'), 'entry', 'admin@example.com'));
+    await assertFails(getFailures(anon(), 'admin@example.com'));
+    await clearOwnFailures(withEmail('admin'), 'admin@example.com');
+    expect(await getFailures(withEmail('owner'), 'admin@example.com')).toBe(0);
+  });
+});
+
+describe('returns, discounts and backup requests', () => {
+  it('a payment may be a return/discount; it can never get a signing link', async () => {
+    const staff = as('entry');
+    const { doc: d, setDoc, serverTimestamp } = await import('firebase/firestore');
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(d(ctx.firestore() as unknown as Firestore, `accounts/${ACC_A}/entries/ret1`), {
+        type: 'payment',
+        subtype: 'return',
+        amount: 1000,
+        signed: -1000,
+        date: '2026-09-03',
+        details: 'مرتجع',
+        attachments: [],
+        voucherNo: 120,
+        deleted: false,
+        createdAt: serverTimestamp(),
+        createdBy: 'import',
+      });
+    });
+    const ret = (await getEntry(staff, ACC_A, 'ret1'))!;
+    expect(ret.entry.subtype).toBe('return');
+    const [account] = await getAccounts(staff, [ACC_A]);
+    await assertFails(
+      createSignLink(staff, 'entry', {
+        account: account!,
+        entry: ret.entry,
+        payerName: 'x',
+        ttlMinutes: 60,
+        pendingForEntry: [],
+      }),
+    );
+    // Editing keeps the mark; removing or adding it is refused.
+    await updateEntry(
+      staff,
+      'entry',
+      ACC_A,
+      ret,
+      { amount: 900, signed: -900, date: ret.entry.date, details: 'مرتجع', keepAttachments: [] },
+      [],
+    );
+    const invoice = {
+      type: 'invoice',
+      amount: 100,
+      signed: 100,
+      date: '2026-09-03',
+      details: '',
+      attachments: [],
+      deleted: false,
+      createdAt: serverTimestamp(),
+      createdBy: 'entry',
+    };
+    await assertFails(
+      setDoc(d(staff, `accounts/${ACC_A}/entries/bad`), { ...invoice, subtype: 'return' }),
+    );
+    await setDoc(d(staff, `accounts/${ACC_A}/entries/ok`), invoice);
+  });
+
+  it('managers request an on-demand backup; data-entry users cannot', async () => {
+    await requestBackup(as('admin'), 'admin');
+    await assertFails(requestBackup(as('entry'), 'entry'));
+    expect((await listBackupRequests(as('owner'))).length).toBe(1);
   });
 });

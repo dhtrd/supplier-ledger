@@ -1,12 +1,17 @@
-# Daily backup to the owner's Dropbox at 12:00 Asia/Riyadh (09:00 UTC).
-# GitHub may delay or drop scheduled runs under load, and disables schedules
-# in public repos after 60 days without repository activity — the app shows
-# the owner the last backup time and warns after 26 hours.
+# Backups to the owner's Dropbox.
+#  - Daily at 12:00 Asia/Riyadh (09:00 UTC): full encrypted backup, moves new
+#    original images to Dropbox, removes backups older than 30 days.
+#  - Every 15 minutes: does nothing unless the owner/admin pressed
+#    «نسخة إلى Dropbox» in the app (one Firestore read when idle).
+# GitHub may delay or drop scheduled runs under load, and disables schedules in
+# public repos after 60 days without repository activity — the app shows the
+# owner the last backup time and warns after 26 hours.
 name: Backup
 
 on:
   schedule:
     - cron: '0 9 * * *'
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -19,6 +24,13 @@ concurrency:
 jobs:
   backup:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      DROPBOX_APP_KEY: ${{ secrets.DROPBOX_APP_KEY }}
+      DROPBOX_APP_SECRET: ${{ secrets.DROPBOX_APP_SECRET }}
+      DROPBOX_REFRESH_TOKEN: ${{ secrets.DROPBOX_REFRESH_TOKEN }}
+      BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -26,10 +38,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --omit=optional
-      - name: Back up Firestore to Dropbox
-        env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          DROPBOX_APP_KEY: ${{ secrets.DROPBOX_APP_KEY }}
-          DROPBOX_APP_SECRET: ${{ secrets.DROPBOX_APP_SECRET }}
-          DROPBOX_REFRESH_TOKEN: ${{ secrets.DROPBOX_REFRESH_TOKEN }}
+      - name: On-demand backup (only if requested in the app)
+        if: github.event.schedule == '*/15 * * * *'
+        run: node scripts/backup/backup.ts --requests
+      - name: Daily backup
+        if: github.event.schedule != '*/15 * * * *'
         run: node scripts/backup/backup.ts

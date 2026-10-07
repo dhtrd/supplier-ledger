@@ -28,6 +28,7 @@ const entry = (p: Partial<Entry>): Entry => ({
   signature: null,
   createdBy: 'u',
   legacy: false,
+  subtype: null,
   ...p,
 });
 
