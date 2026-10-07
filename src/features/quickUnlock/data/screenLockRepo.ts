@@ -120,14 +120,20 @@ export async function unlockWithProof(
   deviceId: string,
 ): Promise<UnlockResult> {
   const key = await emailKey(email);
-  const commit = writeBatch(db);
-  commit.set(doc(db, 'unlockAttempts', uid), { proof, at: serverTimestamp() });
-  commit.set(
-    doc(db, 'lockouts', key),
-    { fails: increment(1), lastFailAt: serverTimestamp() },
-    { merge: true },
-  );
-  await commit.commit(); // errors propagate: locked out / offline
+  const commitWith = (fails: number | ReturnType<typeof increment>) => {
+    const commit = writeBatch(db);
+    commit.set(doc(db, 'unlockAttempts', uid), { proof, at: serverTimestamp() });
+    commit.set(doc(db, 'lockouts', key), { fails, lastFailAt: serverTimestamp() }, { merge: true });
+    return commit.commit();
+  };
+  try {
+    await commitWith(increment(1));
+  } catch (e) {
+    // A lock that expired restarts the count at 1 (the rules refuse +1); a
+    // lock still in force is refused again and propagates.
+    if (!isDenied(e)) throw e;
+    await commitWith(1);
+  }
 
   const reveal = writeBatch(db);
   reveal.update(lockRef(db, uid), {

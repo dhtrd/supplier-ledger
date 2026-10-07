@@ -18,16 +18,21 @@ service cloud.firestore {
       return hashing.sha256(request.auth.token.get('email', '').lower()).toHexString().lower();
     }
     // 5 failed sign-in / PIN attempts lock the account for EVERY role (owner
-    // included) until the owner — or, for the owner, the Firebase console —
-    // resets the counter.
+    // included) for 15 minutes after the last failure (owner decision
+    // 2026-10-07), or until the owner unlocks it sooner.
     function lockoutPath() { return /databases/$(database)/documents/lockouts/$(emailKey()); }
-    function lockedOut() {
-      return exists(lockoutPath()) && get(lockoutPath()).data.fails >= 5;
+    function stillLocked(d) {
+      return d.fails >= 5 && request.time < d.lastFailAt + duration.value(15, 'm');
     }
+    function lockedOut() {
+      return exists(lockoutPath()) && stillLocked(get(lockoutPath()).data);
+    }
+    // The next failure count: +1, or 1 again once a lock has expired.
+    function nextFails(d) { return d.fails >= 5 ? 1 : d.fails + 1; }
     // Exactly one failure is added to the caller's counter in this batch.
     function failureCounted() {
       return getAfter(lockoutPath()).data.lastFailAt == request.time
-        && ((exists(lockoutPath()) && getAfter(lockoutPath()).data.fails == get(lockoutPath()).data.fails + 1)
+        && ((exists(lockoutPath()) && getAfter(lockoutPath()).data.fails == nextFails(get(lockoutPath()).data))
             || (!exists(lockoutPath()) && getAfter(lockoutPath()).data.fails == 1));
     }
     function userActive() {
@@ -55,21 +60,30 @@ service cloud.firestore {
     // readable so the app knows to hide it instead of showing an error.
     function isEntryFor(accountId) {
       return isEntryAssigned(accountId)
-        && get(/databases/$(database)/documents/accounts/$(accountId)).data.get('archived', false) == false;
+        && get(/databases/$(database)/documents/accounts/$(accountId)).data.get('archived', false) == false
+        && get(/databases/$(database)/documents/accounts/$(accountId)).data.get('deleted', false) == false;
     }
     function canAccess(accountId) { return isManager() || isEntryFor(accountId); }
     function settings() { return get(/databases/$(database)/documents/settings/app).data; }
     function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
-    function isDate(v) { return v is string && v.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'); }
+    // A real-looking calendar date: year 2000–2099, month 01–12, day 01–31.
+    // (30/31-day months are checked in the app; the rules cannot do calendars.)
+    function isDate(v) {
+      return v is string && v.matches('^20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$');
+    }
+    function hasText(v, max) { return shortText(v, max) && v.trim().size() > 0; }
     function shortText(v, max) { return v is string && v.size() <= max; }
     function stamped(d) { return d.createdBy == request.auth.uid && d.createdAt == request.time; }
     function touched(d) { return d.updatedBy == request.auth.uid && d.updatedAt == request.time; }
 
     // Every edit/delete of financial data must land with an audit record in the
     // same batch (enforced via getAfter).
+    // The record must be NEW in this very write (an old or pre-made record
+    // cannot be reused to cover another change).
     function audited(path) {
       return request.resource.data.auditId is string
         && request.resource.data.auditId != resource.data.get('auditId', '')
+        && !exists(/databases/$(database)/documents/auditLog/$(request.resource.data.auditId))
         && existsAfter(/databases/$(database)/documents/auditLog/$(request.resource.data.auditId))
         && getAfter(/databases/$(database)/documents/auditLog/$(request.resource.data.auditId)).data.actor == request.auth.uid
         && getAfter(/databases/$(database)/documents/auditLog/$(request.resource.data.auditId)).data.path == path;
@@ -77,7 +91,8 @@ service cloud.firestore {
     // …and, where the owner asked for it, a notification for the managers
     // (same id as the audit record; see /notifications).
     function notified() {
-      return existsAfter(/databases/$(database)/documents/notifications/$(request.resource.data.auditId));
+      return !exists(/databases/$(database)/documents/notifications/$(request.resource.data.auditId))
+        && existsAfter(/databases/$(database)/documents/notifications/$(request.resource.data.auditId));
     }
 
     // ---------- users --------------------------------------------------------
@@ -85,7 +100,7 @@ service cloud.firestore {
       function validUser(d) {
         return d.keys().hasOnly(['name', 'email', 'role', 'active', 'assignedAccounts',
                                  'createdAt', 'createdBy', 'updatedAt', 'updatedBy'])
-          && shortText(d.name, 80) && d.name.size() > 0
+          && hasText(d.name, 80)
           && shortText(d.email, 200)
           && d.active is bool
           && d.assignedAccounts is list && d.assignedAccounts.size() <= 200;
@@ -104,6 +119,7 @@ service cloud.firestore {
         && uid != request.auth.uid
         && validUser(request.resource.data)
         && request.resource.data.role in ['admin', 'entry']
+        && request.resource.data.email == resource.data.email
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.createdBy == resource.data.createdBy
         && touched(request.resource.data);
@@ -111,7 +127,7 @@ service cloud.firestore {
       allow update: if isOwner()
         && uid == request.auth.uid
         && changed().hasOnly(['name', 'updatedAt', 'updatedBy'])
-        && shortText(request.resource.data.name, 80) && request.resource.data.name.size() > 0
+        && hasText(request.resource.data.name, 80)
         && touched(request.resource.data);
       allow delete: if false;
     }
@@ -129,11 +145,11 @@ service cloud.firestore {
         && request.resource.data.idleCountdownSeconds is int
         && request.resource.data.idleCountdownSeconds >= 5
         && request.resource.data.idleCountdownSeconds <= 120
-        && shortText(request.resource.data.payerName, 100)
+        && hasText(request.resource.data.payerName, 100)
         && request.resource.data.roleLabels.keys().hasOnly(['owner', 'admin', 'entry'])
-        && shortText(request.resource.data.roleLabels.owner, 40)
-        && shortText(request.resource.data.roleLabels.admin, 40)
-        && shortText(request.resource.data.roleLabels.entry, 40)
+        && hasText(request.resource.data.roleLabels.owner, 40)
+        && hasText(request.resource.data.roleLabels.admin, 40)
+        && hasText(request.resource.data.roleLabels.entry, 40)
         && touched(request.resource.data);
       allow create, delete: if false;
     }
@@ -156,10 +172,10 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['fails', 'lastFailAt'])
         && request.resource.data.fails == 1
         && request.resource.data.lastFailAt == request.time;
-      allow update: if resource.data.fails < 5 && failOnly()
-        && request.resource.data.fails == resource.data.fails + 1;
+      allow update: if !stillLocked(resource.data) && failOnly()
+        && request.resource.data.fails == nextFails(resource.data);
       // A successful sign-in clears its own counter (only while not locked).
-      allow update: if signedIn() && key == emailKey() && resource.data.fails < 5
+      allow update: if signedIn() && key == emailKey() && !stillLocked(resource.data)
         && changed().hasOnly(['fails']) && request.resource.data.fails == 0;
       // Reset by the user's own correct PIN in the unlock batch (the
       // /screenLocks rule checks the PIN; this one checks it is that batch).
@@ -249,7 +265,7 @@ service cloud.firestore {
       // A correct guess may be the 5th: the counter it raised is reset with it.
       function counterReset() {
         return !exists(lockoutPath())
-          || ((get(lockoutPath()).data.fails < 5
+          || ((!stillLocked(get(lockoutPath()).data)
                || get(lockoutPath()).data.lastFailAt == get(attemptPath()).data.at)
               && getAfter(lockoutPath()).data.fails == 0);
       }
@@ -297,23 +313,58 @@ service cloud.firestore {
     }
 
     // ---------- voucher counter ---------------------------------------------
+    // No gaps in voucher numbers (owner decision 2026-10-07): the counter moves
+    // only together with the NEW payment entry that takes the number.
     match /counters/vouchers {
+      function taker() {
+        return /databases/$(database)/documents/accounts/$(request.resource.data.lastAccount)/entries/$(request.resource.data.lastEntry);
+      }
       allow get: if isActive();
-      allow update: if isActive()
-        && changed().hasOnly(['next'])
-        && request.resource.data.next == resource.data.next + 1;
+      allow update: if changed().hasOnly(['next', 'lastAccount', 'lastEntry'])
+        && request.resource.data.next == resource.data.next + 1
+        && request.resource.data.lastAccount is string
+        && request.resource.data.lastAccount.matches('^[A-Za-z0-9_-]{1,64}$')
+        && request.resource.data.lastEntry is string
+        && request.resource.data.lastEntry.matches('^[A-Za-z0-9_-]{1,64}$')
+        && !exists(taker())
+        && getAfter(taker()).data.voucherNo == request.resource.data.next
+        && isActive();
       allow create, delete: if false;
     }
 
     // ---------- audit log (append-only) -------------------------------------
+    // A record is accepted only together with the change it describes: the
+    // target (an account or one of its entries the writer can access) must
+    // point at it in the same write, and `before` must be its real previous
+    // state (for archive/unarchive: the previous archived flag).
     match /auditLog/{id} {
+      function seg() { return request.resource.data.path.split('/'); }
+      function target() {
+        return seg().size() == 2
+          ? /databases/$(database)/documents/accounts/$(seg()[1])
+          : /databases/$(database)/documents/accounts/$(seg()[1])/entries/$(seg()[3]);
+      }
+      function beforeIsReal() {
+        return request.resource.data.action in ['archive', 'unarchive']
+          ? request.resource.data.before.keys().hasOnly(['archived'])
+            && request.resource.data.before.archived == get(target()).data.get('archived', false)
+          : request.resource.data.before == get(target()).data;
+      }
       allow read: if isManager();
       allow create: if request.resource.data.keys().hasOnly(['actor', 'action', 'path', 'before', 'at'])
         && request.resource.data.actor == request.auth.uid
         && request.resource.data.at == request.time
         && request.resource.data.action in ['update', 'delete', 'restore', 'archive', 'unarchive']
         && request.resource.data.path is string
-        && isActive();
+        && request.resource.data.path.matches('^accounts/[A-Za-z0-9_-]{1,64}(/entries/[A-Za-z0-9_-]{1,64})?$')
+        && (request.resource.data.action in ['archive', 'unarchive'] ? seg().size() == 2
+            : request.resource.data.action == 'update' ? seg().size() == 4 : true)
+        && request.resource.data.before is map
+        && getAfter(target()).data.get('auditId', '') == id
+        && beforeIsReal();
+      // No role check here on purpose: the target's own rule (which this write
+      // must also pass, since it points at this record) checks the role and
+      // the account. Repeating it would exceed the 1000-expression budget.
       allow update, delete: if false;
     }
 
@@ -327,7 +378,7 @@ service cloud.firestore {
       function validNotification(d) {
         return d.keys().hasOnly(['kind', 'accountId', 'entryId', 'accountName', 'title', 'changes',
                                  'actor', 'actorName', 'at', 'readBy'])
-          && d.kind in ['signedEdit', 'invoiceEdit', 'delete', 'restore']
+          && d.kind in ['signedEdit', 'invoiceEdit', 'delete', 'restore', 'accountDelete', 'accountRestore']
           && d.accountId is string && d.accountId.size() <= 64
           && d.entryId is string && d.entryId.size() <= 64
           && shortText(d.accountName, 120)
@@ -339,13 +390,27 @@ service cloud.firestore {
           && d.readBy == [];
       }
       allow read: if isManager();
+      // (Role checks happen on the entry write this notification belongs to.)
+      // Kinds on an account itself (entryId == ''): accountDelete / accountRestore.
+      function onAccount(d) { return d.kind in ['accountDelete', 'accountRestore']; }
+      function acctP(d) { return /databases/$(database)/documents/accounts/$(d.accountId); }
+      function entryP(d) { return /databases/$(database)/documents/accounts/$(d.accountId)/entries/$(d.entryId); }
       allow create: if validNotification(request.resource.data)
-        && isActive()
         && auditAfter().actor == request.auth.uid
-        && auditAfter().path == entryPath(request.resource.data)
-        && auditAfter().action == (request.resource.data.kind in ['signedEdit', 'invoiceEdit']
-                                   ? 'update' : request.resource.data.kind)
-        && getAfter(/databases/$(database)/documents/accounts/$(request.resource.data.accountId)/entries/$(request.resource.data.entryId)).data.auditId == id;
+        && (onAccount(request.resource.data)
+            ? request.resource.data.entryId == ''
+              && auditAfter().path == 'accounts/' + request.resource.data.accountId
+              && auditAfter().action == (request.resource.data.kind == 'accountDelete' ? 'delete' : 'restore')
+              && getAfter(acctP(request.resource.data)).data.auditId == id
+            : auditAfter().path == entryPath(request.resource.data)
+              && auditAfter().action == (request.resource.data.kind in ['signedEdit', 'invoiceEdit']
+                                         ? 'update' : request.resource.data.kind)
+              && (request.resource.data.kind != 'signedEdit'
+                  || 'signature' in get(entryP(request.resource.data)).data)
+              && (request.resource.data.kind != 'invoiceEdit'
+                  || get(entryP(request.resource.data)).data.type == 'invoice')
+              && getAfter(entryP(request.resource.data)).data.auditId == id)
+        && request.resource.data.accountName == get(acctP(request.resource.data)).data.name;
       // Mark as read: add only yourself.
       allow update: if changed().hasOnly(['readBy'])
         && isManager()
@@ -364,10 +429,11 @@ service cloud.firestore {
     match /accounts/{accountId} {
       function validAccount(d) {
         return d.keys().hasOnly(['name', 'phone', 'group', 'logo', 'deleted',
-                                 'archived', 'archivedAt', 'archivedBy', 'auditId',
+                                 'archived', 'archivedAt', 'archivedBy', 'auditId', 'deletedAt',
+                                 'balance', 'entryCount', 'lastDate', 'totalsEntry', 'totalsAt',
                                  'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'legacyId'])
           && d.get('archived', false) is bool
-          && shortText(d.name, 120) && d.name.size() > 0
+          && hasText(d.name, 120)
           && d.phone is string && (d.phone == '' || d.phone.matches('^05[0-9]{8}$'))
           && d.group in ['suppliers', 'customers', 'general']
           && (!('logo' in d) || d.logo == null || (d.logo is bytes && d.logo.size() <= 81920))
@@ -378,18 +444,38 @@ service cloud.firestore {
       allow create: if isManager()
         && validAccount(request.resource.data)
         && request.resource.data.deleted == false
+        && !('archived' in request.resource.data)
+        && !('auditId' in request.resource.data)
+        && !('legacyId' in request.resource.data)
+        && !('deletedAt' in request.resource.data)
+        // A new account starts with zero running totals.
+        && request.resource.data.balance == 0
+        && request.resource.data.entryCount == 0
+        && request.resource.data.lastDate == ''
+        && !('totalsEntry' in request.resource.data)
+        && !('totalsAt' in request.resource.data)
         && stamped(request.resource.data);
       allow update: if isManager()
         && validAccount(request.resource.data)
+        && request.resource.data.get('balance', null) == resource.data.get('balance', null)
+        && request.resource.data.get('entryCount', null) == resource.data.get('entryCount', null)
+        && request.resource.data.get('lastDate', null) == resource.data.get('lastDate', null)
+        && request.resource.data.get('totalsEntry', null) == resource.data.get('totalsEntry', null)
+        && request.resource.data.get('totalsAt', null) == resource.data.get('totalsAt', null)
+        && request.resource.data.get('deletedAt', null) == resource.data.get('deletedAt', null)
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.deleted == resource.data.deleted
+        && request.resource.data.get('auditId', null) == resource.data.get('auditId', null)
+        && request.resource.data.get('legacyId', null) == resource.data.get('legacyId', null)
         && request.resource.data.get('archived', false) == resource.data.get('archived', false)
         && request.resource.data.get('archivedAt', null) == resource.data.get('archivedAt', null)
         && request.resource.data.get('archivedBy', null) == resource.data.get('archivedBy', null)
         && touched(request.resource.data);
       // Archive / restore from the archive (owner and managers), audited.
+      // (Only the archive fields are checked, so an account migrated with an
+      // old-format phone can still be archived.)
       allow update: if isManager()
-        && validAccount(request.resource.data)
         && changed().hasOnly(['archived', 'archivedAt', 'archivedBy', 'auditId', 'updatedAt', 'updatedBy'])
         && request.resource.data.archived is bool
         && request.resource.data.archived != resource.data.get('archived', false)
@@ -399,6 +485,41 @@ service cloud.firestore {
             : !('archivedAt' in request.resource.data) && !('archivedBy' in request.resource.data))
         && touched(request.resource.data)
         && audited('accounts/' + accountId);
+      // Move to the trash / restore (owner and managers): audited + notified.
+      // Its entries stay as they are and come back with it.
+      allow update: if isManager()
+        && changed().hasOnly(['deleted', 'deletedAt', 'auditId', 'updatedAt', 'updatedBy'])
+        && request.resource.data.deleted is bool
+        && request.resource.data.deleted != resource.data.deleted
+        && (request.resource.data.deleted
+            ? request.resource.data.deletedAt == request.time
+            : !('deletedAt' in request.resource.data))
+        && touched(request.resource.data)
+        && audited('accounts/' + accountId)
+        && notified();
+      // Running totals (balance, live entries, latest date): moved by exactly
+      // one entry change written in the same transaction. Anyone who may write
+      // that entry may move them — and only by the entry's real difference.
+      function entryAt(e) { return /databases/$(database)/documents/accounts/$(accountId)/entries/$(e); }
+      function liveBefore(e) { return exists(entryAt(e)) && get(entryAt(e)).data.deleted == false; }
+      function liveAfter(e) { return existsAfter(entryAt(e)) && getAfter(entryAt(e)).data.deleted == false; }
+      function totalsMath(d) {
+        return d.balance == resource.data.balance
+              + (liveAfter(d.totalsEntry) ? getAfter(entryAt(d.totalsEntry)).data.signed : 0)
+              - (liveBefore(d.totalsEntry) ? get(entryAt(d.totalsEntry)).data.signed : 0)
+          && d.entryCount == resource.data.entryCount
+              + (liveAfter(d.totalsEntry) ? 1 : 0) - (liveBefore(d.totalsEntry) ? 1 : 0)
+          && d.lastDate == (liveAfter(d.totalsEntry)
+                            && getAfter(entryAt(d.totalsEntry)).data.date > resource.data.lastDate
+                              ? getAfter(entryAt(d.totalsEntry)).data.date : resource.data.lastDate);
+      }
+      allow update: if changed().hasOnly(['balance', 'entryCount', 'lastDate', 'totalsEntry', 'totalsAt'])
+        && 'balance' in resource.data
+        && request.resource.data.totalsAt == request.time
+        && request.resource.data.totalsEntry is string
+        && request.resource.data.totalsEntry.matches('^[A-Za-z0-9_-]{1,64}$')
+        && totalsMath(request.resource.data)
+        && canAccess(accountId);
       allow delete: if false;
 
       // ---------- entries ----------------------------------------------------
@@ -416,6 +537,9 @@ service cloud.firestore {
             && isDate(d.date)
             && shortText(d.details, 500)
             && d.attachments is list && d.attachments.size() <= 5
+            && (d.attachments.size() == 0
+                || d.attachments.join(',').matches('^[A-Za-z0-9]{20}(,[A-Za-z0-9]{20})*$'))
+            && (!('legacyId' in d) || d.legacyId is int)
             // A payment may be marked as a return (مرتجع) or a discount (خصم).
             && (!('subtype' in d) || (d.type == 'payment' && d.subtype in ['return', 'discount']))
             && d.deleted is bool;
@@ -431,6 +555,7 @@ service cloud.firestore {
         function signatureFromLink(d) {
           // A signature can only be copied from a signed link of THIS entry.
           return d.signLinkId is string
+            && d.signature.keys().hasOnly(['name', 'image', 'signedAt'])
             && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.status == 'signed'
             && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.entryId == entryId
             && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.accountId == accountId
@@ -450,9 +575,18 @@ service cloud.firestore {
             && request.resource.data.get('subtype', null) == resource.data.get('subtype', null)
             && request.resource.data.get('voucherNo', null) == resource.data.get('voucherNo', null)
             && request.resource.data.createdAt == resource.data.createdAt
-            && request.resource.data.createdBy == resource.data.createdBy;
+            && request.resource.data.createdBy == resource.data.createdBy
+            && request.resource.data.get('legacyId', null) == resource.data.get('legacyId', null);
         }
         function entryPath() { return 'accounts/' + accountId + '/entries/' + entryId; }
+        function acct() { return /databases/$(database)/documents/accounts/$(accountId); }
+        // Every create/edit/trash/restore moves the account's running totals in
+        // the same write (not required until the account is initialised).
+        function totalsMoved() {
+          return !('balance' in get(acct()).data)
+            || (getAfter(acct()).data.totalsAt == request.time
+                && getAfter(acct()).data.totalsEntry == entryId);
+        }
         function trashFlip() {
           return changed().hasOnly(['deleted', 'deletedAt', 'auditId', 'updatedAt', 'updatedBy'])
             && touched(request.resource.data)
@@ -468,9 +602,12 @@ service cloud.firestore {
           && !('signature' in request.resource.data)
           && !('signLinkId' in request.resource.data)
           && !('legacyId' in request.resource.data)
+          && !('deletedAt' in request.resource.data)
+          && !('auditId' in request.resource.data)
           && stamped(request.resource.data)
           && (request.resource.data.type != 'payment' || voucherAllocated(request.resource.data))
-          && (request.resource.data.type == 'payment' || !('voucherNo' in request.resource.data));
+          && (request.resource.data.type == 'payment' || !('voucherNo' in request.resource.data))
+          && totalsMoved();
 
         // Edit. Editing a signed voucher removes its signature (and link id):
         // a new link must be sent. Always audited; a signed voucher or an
@@ -490,7 +627,8 @@ service cloud.firestore {
               : request.resource.data.get('signLinkId', null) == resource.data.get('signLinkId', null))
           && touched(request.resource.data)
           && audited(entryPath())
-          && ((!('signature' in resource.data) && resource.data.type != 'invoice') || notified());
+          && ((!('signature' in resource.data) && resource.data.type != 'invoice') || notified())
+          && totalsMoved();
 
         // Move to the trash (signed vouchers too): nothing else changes, so a
         // restore brings the entry back exactly as it was. Audited + notified.
@@ -498,14 +636,16 @@ service cloud.firestore {
           && request.resource.data.deleted == true
           && request.resource.data.deletedAt == request.time
           && canAccess(accountId)
-          && trashFlip();
+          && trashFlip()
+          && totalsMoved();
 
         // Restore from the trash: owner and managers only.
         allow update: if resource.data.deleted == true
           && request.resource.data.deleted == false
           && !('deletedAt' in request.resource.data)
           && isManager()
-          && trashFlip();
+          && trashFlip()
+          && totalsMoved();
 
         // Attach the recipient's signature (copied from the signed link).
         allow update: if resource.data.type == 'payment'
@@ -534,9 +674,11 @@ service cloud.firestore {
           && request.resource.data.size == request.resource.data.data.size()
           && request.resource.data.mime in ['image/webp', 'image/jpeg']
           && request.resource.data.entryId is string
+          && existsAfter(/databases/$(database)/documents/accounts/$(accountId)/entries/$(request.resource.data.entryId))
           && stamped(request.resource.data);
         allow update: if false;
-        allow delete: if isManager();
+        // No permanent delete for anyone (originals are also kept in Dropbox).
+        allow delete: if false;
       }
     }
 
@@ -548,6 +690,9 @@ service cloud.firestore {
       function live() {
         return resource.data.status == 'pending'
           && request.time < resource.data.createdAt + duration.value(resource.data.ttlMinutes, 'm');
+      }
+      function accountAt(d) {
+        return get(/databases/$(database)/documents/accounts/$(d.accountId)).data;
       }
       function entryAt(d) {
         return get(/databases/$(database)/documents/accounts/$(d.accountId)/entries/$(d.entryId)).data;
@@ -572,6 +717,12 @@ service cloud.firestore {
         && !('signature' in entryAt(request.resource.data))
         && entryAt(request.resource.data).amount == request.resource.data.amount
         && entryAt(request.resource.data).voucherNo == request.resource.data.voucherNo
+        && request.resource.data.date == entryAt(request.resource.data).date
+        && request.resource.data.details == entryAt(request.resource.data).details
+        && request.resource.data.payerName == settings().payerName
+        && request.resource.data.accountName == accountAt(request.resource.data).name
+        && request.resource.data.accountPhone == accountAt(request.resource.data).phone
+        && request.resource.data.get('logo', null) == accountAt(request.resource.data).get('logo', null)
         && shortText(request.resource.data.amountWords, 300)
         && shortText(request.resource.data.details, 500)
         && (!('logo' in request.resource.data) || request.resource.data.logo == null

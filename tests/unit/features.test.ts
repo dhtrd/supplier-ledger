@@ -2,14 +2,26 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { Bytes, Timestamp } from 'firebase/firestore';
 import { idlePhase } from '../../src/core/idle';
-import { emailKey, isLocked, remainingAttempts } from '../../src/features/auth/domain/lockout';
+import {
+  effectiveFails,
+  emailKey,
+  isLocked,
+  minutesUntilUnlock,
+  remainingAttempts,
+} from '../../src/features/auth/domain/lockout';
 import { encodeValue } from '../../src/features/backup/domain/snapshot';
 import {
   balanceAfter,
   buildStatement,
   latestEntries,
 } from '../../src/features/ledger/domain/statement';
-import { entryLabel, isCashPayment, type Entry } from '../../src/features/ledger/domain/types';
+import {
+  daysAhead,
+  entryLabel,
+  isCashPayment,
+  isFarFuture,
+  type Entry,
+} from '../../src/features/ledger/domain/types';
 import { statementSheet } from '../../src/features/ledger/export/statementSheet';
 import { DEFAULT_SETTINGS, validateSettings } from '../../src/features/settings/domain/types';
 import { can, validatePassword } from '../../src/features/users/domain/types';
@@ -18,6 +30,12 @@ import { IMAGE_ACCEPT, isApprovedImage, isHeicFile } from '../../src/shared/lib/
 import { expiredBackupFolders, rawLink } from '../../scripts/lib/dropbox';
 import { parseLedgerSheet, verifyAgainstSheet } from '../../scripts/import/excelLedger';
 import { decode } from '../../scripts/backup/snapshot';
+import {
+  nextTotals,
+  readTotals,
+  totalsOf,
+  ZERO_TOTALS,
+} from '../../src/features/accounts/domain/totals';
 import {
   archiveCandidates,
   daysBetween,
@@ -457,5 +475,51 @@ describe('notifications text', () => {
   it('keeps long details short', () => {
     const lines = describeChanges('invoice', base, { ...base, details: 'س'.repeat(400) });
     expect(lines[0]!.length).toBeLessThanOrEqual(200);
+  });
+});
+
+describe('account running totals', () => {
+  const e = (signed: number, date = '2026-10-01', deleted = false) => ({ signed, date, deleted });
+  it('create, edit, delete and restore move the totals exactly', () => {
+    let t = nextTotals(ZERO_TOTALS, null, e(1000));
+    expect(t).toEqual({ balance: 1000, entryCount: 1, lastDate: '2026-10-01' });
+    t = nextTotals(t, null, e(-300, '2026-10-05'));
+    expect(t).toEqual({ balance: 700, entryCount: 2, lastDate: '2026-10-05' });
+    t = nextTotals(t, e(1000), e(1500, '2026-09-01'));
+    expect(t).toEqual({ balance: 1200, entryCount: 2, lastDate: '2026-10-05' });
+    t = nextTotals(t, e(1500), e(1500, '2026-09-01', true));
+    expect(t).toEqual({ balance: -300, entryCount: 1, lastDate: '2026-10-05' });
+    t = nextTotals(t, e(1500, '2026-09-01', true), e(1500, '2026-09-01'));
+    expect(t.balance).toBe(1200);
+    expect(nextTotals(t, e(0), e(0))).toEqual(t);
+  });
+  it('from scratch equals step by step; uninitialised accounts are detected', () => {
+    expect(totalsOf([e(5), e(-2, '2026-12-01'), e(9, '2027-01-01', true)])).toEqual({
+      balance: 3,
+      entryCount: 2,
+      lastDate: '2026-12-01',
+    });
+    expect(readTotals({ name: 'x' })).toBeNull();
+    expect(readTotals({ balance: 0, entryCount: 0 })).toEqual(ZERO_TOTALS);
+  });
+});
+
+describe('owner decisions (2)', () => {
+  const MIN = 60_000;
+  it('a lock lifts by itself 15 minutes after the last failure', () => {
+    const t = 1_000_000_000;
+    const s = { fails: 5, lastFailAtMs: t };
+    expect(isLocked(s, t + 14 * MIN)).toBe(true);
+    expect(minutesUntilUnlock(s, t + 14 * MIN)).toBe(1);
+    expect(isLocked(s, t + 15 * MIN)).toBe(false);
+    expect(effectiveFails(s, t + 16 * MIN)).toBe(0);
+    expect(effectiveFails({ fails: 3, lastFailAtMs: t }, t + 60 * MIN)).toBe(3);
+    expect(isLocked(5)).toBe(true); // unknown time: treat as locked
+  });
+  it('dates more than 30 days ahead are flagged', () => {
+    expect(daysAhead('2026-11-06', '2026-10-07')).toBe(30);
+    expect(isFarFuture('2026-11-06', '2026-10-07')).toBe(false);
+    expect(isFarFuture('2026-11-07', '2026-10-07')).toBe(true);
+    expect(isFarFuture('2020-01-01', '2026-10-07')).toBe(false);
   });
 });

@@ -1356,3 +1356,8 @@ textarea.input {
     display: none;
   }
 }
+.trash-head {
+  margin: 0;
+  padding: 14px var(--gutter) 6px;
+  font-size: 18px;
+}

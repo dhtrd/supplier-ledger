@@ -1,3 +1,4 @@
+import { cleanText } from '../../../shared/lib/text';
 import {
   collection,
   doc,
@@ -45,11 +46,11 @@ export async function saveSettings(db: Firestore, uid: string, s: AppSettings): 
     linkMinutes: s.linkMinutes,
     idleMinutes: s.idleMinutes,
     idleCountdownSeconds: s.idleCountdownSeconds,
-    payerName: s.payerName.trim(),
+    payerName: cleanText(s.payerName),
     roleLabels: {
-      owner: s.roleLabels.owner.trim(),
-      admin: s.roleLabels.admin.trim(),
-      entry: s.roleLabels.entry.trim(),
+      owner: cleanText(s.roleLabels.owner),
+      admin: cleanText(s.roleLabels.admin),
+      entry: cleanText(s.roleLabels.entry),
     },
     updatedAt: serverTimestamp(),
     updatedBy: uid,

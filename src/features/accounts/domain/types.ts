@@ -1,3 +1,5 @@
+import type { RunningTotals } from './totals';
+import { cleanText } from '../../../shared/lib/text';
 import { normalizeDigits } from '../../../shared/lib/money';
 import { toLocalMobile } from '../../../shared/lib/phone';
 
@@ -14,6 +16,8 @@ export interface Account {
   deleted: boolean;
   /** Hidden from the daily list (owner decision 2026-10-07); data stays. */
   archived: boolean;
+  /** Running totals kept on the account; null until the backfill has run. */
+  totals: RunningTotals | null;
 }
 
 export const GROUP_LABEL: Record<AccountGroup, string> = {
@@ -41,7 +45,7 @@ export function storedPhone(raw: string): string {
 
 export function validateAccountForm(v: AccountForm): Partial<Record<keyof AccountForm, string>> {
   const errors: Partial<Record<keyof AccountForm, string>> = {};
-  const name = v.name.trim();
+  const name = cleanText(v.name);
   if (!name) errors.name = 'أدخل اسم الحساب.';
   else if (name.length > 120) errors.name = 'الاسم أطول من 120 حرفاً.';
   // Owner decision: a number WhatsApp cannot use is never saved.

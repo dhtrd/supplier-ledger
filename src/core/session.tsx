@@ -10,7 +10,7 @@ import { unlockAfterLogin, watchScreenLock } from '../features/quickUnlock/data/
 import { deviceId } from '../features/quickUnlock/data/device';
 import type { ScreenLock } from '../features/quickUnlock/domain/presence';
 import { errorMessage, reportError } from './errors';
-import { fb } from './firebase';
+import { fb, wipeLocalData } from './firebase';
 
 interface SignedInData {
   user: User;
@@ -50,13 +50,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     };
 
     let generation = 0;
+    let hadUser = false;
+    /** The app was usable on this page load (so a lock now must wipe the cache). */
+    let wasReady = false;
     const stopAuth = onAuthStateChanged(auth, async (user) => {
       stopInner();
       const gen = ++generation;
       if (!user) {
+        // Signed out elsewhere (another tab, password change): wipe the device
+        // cache here too, exactly like the «تسجيل الخروج» button.
+        if (hadUser) return void logout();
         setState({ status: 'signedOut' });
         return;
       }
+      hadUser = true;
+      wasReady = false;
       setState({ status: 'loading' });
       // 5 failed attempts lock the account (enforced by the rules as well).
       try {
@@ -92,6 +100,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           // snapshot that follows re-emits; on failure the lock screen shows.
           unlockAfterLogin(db, user.uid, deviceId()).catch((e) => reportError('auto-unlock', e));
         }
+        // Shared devices (owner decision 2026-10-07): when the screen locks
+        // after being in use, wipe the cached ledger data and restart on the
+        // lock screen; unlocking reads fresh from the server.
+        if (screen.locked && wasReady) {
+          wasReady = false;
+          void wipeLocalData().finally(() => window.location.reload());
+          return;
+        }
+        if (!screen.locked) wasReady = true;
         setState({
           status: screen.locked ? 'screenLocked' : 'ready',
           user,
@@ -155,6 +172,17 @@ export function useReady(): ReadySession {
   return s;
 }
 
+/**
+ * Signs out and wipes the cached ledger data from this browser, then reloads
+ * on the login page (a closed Firestore cannot be reused).
+ */
 export async function logout(): Promise<void> {
-  await signOut(fb().auth);
+  try {
+    await signOut(fb().auth);
+  } finally {
+    await wipeLocalData();
+    // A hash-only change does not reload the page: set it, then reload.
+    window.history.replaceState(null, '', `${window.location.pathname}#/login`);
+    window.location.reload();
+  }
 }

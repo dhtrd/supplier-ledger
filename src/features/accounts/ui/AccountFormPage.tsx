@@ -35,6 +35,8 @@ export function AccountFormPage() {
   const [loadError, setLoadError] = useState('');
   const [errors, setErrors] = useState<Partial<Record<keyof AccountForm, string>>>({});
   const [busy, setBusy] = useState(false);
+  /** The logo is still being compressed: saving now would drop it. */
+  const [logoBusy, setLogoBusy] = useState(false);
   const [initial, setInitial] = useState('');
   const desktop = useDesktop();
 
@@ -74,18 +76,22 @@ export function AccountFormPage() {
 
   const pickLogo = async (file: File | undefined) => {
     if (!file) return;
+    setLogoBusy(true);
     try {
       const img = await compressImage(file, { maxBytes: LOGO_MAX_BYTES - 1024, maxSide: 400 });
       setLogo(img.data);
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
+      setLogoBusy(false);
       if (fileRef.current) fileRef.current.value = '';
     }
   };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    // Ctrl+Enter submits even while the button is disabled: guard here too.
+    if (busy || logoBusy) return;
     const errs = validateAccountForm(form);
     setErrors(errs);
     if (Object.keys(errs).length) return;
@@ -211,10 +217,10 @@ export function AccountFormPage() {
               <button
                 type="submit"
                 className="btn btn-primary"
-                disabled={busy}
+                disabled={busy || logoBusy}
                 style={{ minHeight: 52 }}
               >
-                {busy ? 'جارٍ الحفظ…' : 'حفظ'}
+                {busy ? 'جارٍ الحفظ…' : logoBusy ? 'جارٍ تجهيز الشعار…' : 'حفظ'}
                 {!busy && <kbd className="kbd">Ctrl+Enter</kbd>}
               </button>
               <Link to={backTo} className="btn btn-quiet" style={{ minHeight: 52 }}>
@@ -235,10 +241,10 @@ export function AccountFormPage() {
           <button
             type="submit"
             className="btn btn-primary btn-block"
-            disabled={busy}
+            disabled={busy || logoBusy}
             style={{ maxWidth: 640 }}
           >
-            {busy ? 'جارٍ الحفظ…' : 'حفظ'}
+            {busy ? 'جارٍ الحفظ…' : logoBusy ? 'جارٍ تجهيز الشعار…' : 'حفظ'}
           </button>
         </div>
       )}

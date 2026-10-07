@@ -36,6 +36,8 @@ import {
   entryLabel,
   MAX_ATTACHMENTS,
   MAX_DETAILS,
+  daysAhead,
+  isFarFuture,
   signedAmount,
   validateEntryForm,
   type EntryType,
@@ -87,6 +89,8 @@ export function EntryFormPage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [dateOpen, setDateOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** A far-future date the user has already been warned about (second save goes through). */
+  const [futureOk, setFutureOk] = useState('');
   const [processing, setProcessing] = useState(false);
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
@@ -154,11 +158,14 @@ export function EntryFormPage() {
     if (galleryRef.current) galleryRef.current.value = '';
   }
 
-  const dirty =
-    !!amountText.trim() ||
-    !!details.trim() ||
-    added.length > 0 ||
-    (!!current && keep.length !== current.entry.attachments.length);
+  // New entry: anything typed. Edit: only a real change from what was loaded.
+  const dirty = current
+    ? added.length > 0 ||
+      keep.length !== current.entry.attachments.length ||
+      date !== current.entry.date ||
+      details !== current.entry.details ||
+      (type !== 'note' && parseAmount(amountText) !== current.entry.amount)
+    : !!amountText.trim() || !!details.trim() || added.length > 0;
 
   const parsed = type === 'note' ? 0 : parseAmount(amountText);
   const nextSigned = parsed === null || parsed < 0 ? null : signedAmount(type, parsed);
@@ -183,9 +190,24 @@ export function EntryFormPage() {
 
   const save = async (again: boolean) => {
     if (busy || processing) return;
-    const res = validateEntryForm({ type, amountText, date, details, attachmentCount });
+    const res = validateEntryForm({
+      type,
+      amountText,
+      date,
+      details,
+      attachmentCount,
+      requireNoteText: !current || current.entry.details.trim() !== '',
+    });
     if (!res.ok) {
       setErrors(res.errors as Record<string, string>);
+      return;
+    }
+    const todayIso = todayRiyadh();
+    if (isFarFuture(res.date, todayIso) && futureOk !== res.date) {
+      setFutureOk(res.date);
+      setErrors({
+        date: `التاريخ بعد ${daysAhead(res.date, todayIso)} يوماً من اليوم. تأكّد منه، ثم اضغط الحفظ مرة أخرى.`,
+      });
       return;
     }
     setErrors({});
@@ -235,7 +257,15 @@ export function EntryFormPage() {
       navigate(`/a/${id}`, { replace: true });
     } catch (e) {
       reportError('entry-save', e);
-      toast.error(errorMessage(e));
+      const denied =
+        !!e && typeof e === 'object' && 'code' in e && String(e.code).includes('permission-denied');
+      // The rules compare the audit copy with the server's current version: a
+      // refusal on an edit almost always means someone changed it meanwhile.
+      toast.error(
+        denied && current
+          ? 'تعذّر الحفظ: تغيّرت هذه العملية منذ فتحتها (ربما عدّلها مستخدم آخر). ارجع للكشف وافتحها من جديد.'
+          : errorMessage(e),
+      );
       setBusy(false);
     }
   };
@@ -434,7 +464,17 @@ export function EntryFormPage() {
                 </span>
                 <Icon name="calendar" size={20} />
               </button>
-              {errors.date && <div className="error-text">{errors.date}</div>}
+              {errors.date ? (
+                <div className="error-text" role="alert">
+                  {errors.date}
+                </div>
+              ) : (
+                isFarFuture(date, today) && (
+                  <div className="hint" style={{ color: 'var(--warn)' }}>
+                    تاريخ بعد {daysAhead(date, today)} يوماً من اليوم.
+                  </div>
+                )
+              )}
             </div>
           </div>
 

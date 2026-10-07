@@ -1,3 +1,5 @@
+import { amountInWords } from '../../../shared/lib/tafqit';
+import { cleanText } from '../../../shared/lib/text';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { errorMessage, reportError } from '../../../core/errors';
@@ -53,18 +55,22 @@ export function SignPage() {
   }, [token, validToken]);
 
   const link = view.kind === 'ready' || view.kind === 'done' ? view.link : null;
+  // The server (rules) decides expiry: the page was readable, so the link was
+  // live. The recipient's phone clock may be wrong, so it never blocks signing;
+  // it only feeds the countdown text.
   const minutesLeft = link ? Math.ceil((expiresAtMs(link) - now) / 60_000) : 0;
-  const expired = view.kind === 'ready' && minutesLeft <= 0;
-  const ready = name.trim().length >= 2 && hasInk && !busy && !expired;
+  const ready = cleanText(name).length >= 2 && hasInk && !busy;
 
   const submit = async () => {
     if (view.kind !== 'ready') return;
     setFormError('');
-    const signer = name.trim().replace(/\s+/g, ' ');
+    const signer = cleanText(name).replace(/\s+/g, ' ');
     if (signer.length < 2 || signer.length > 80)
       return setFormError('اكتب اسمك (من حرفين إلى 80 حرفاً).');
     const png = pad.current?.toPng(MAX_SIGNATURE_CHARS);
-    if (!png) return setFormError('ارسم توقيعك داخل المربع.');
+    if (png === 'empty') return setFormError('ارسم توقيعك داخل المربع.');
+    if (png === 'tooLarge' || !png)
+      return setFormError('التوقيع كبير جداً. امسحه وأعد التوقيع بخط أبسط.');
     setBusy(true);
     try {
       await signLink(fb().db, token, signer, png);
@@ -124,7 +130,7 @@ export function SignPage() {
           </div>
         </div>
       )}
-      {(view.kind === 'dead' || expired) && (
+      {view.kind === 'dead' && (
         <Result
           tone="bad"
           title="انتهت صلاحية الرابط أو استُخدم"
@@ -139,7 +145,7 @@ export function SignPage() {
         />
       )}
 
-      {view.kind === 'ready' && !expired && (
+      {view.kind === 'ready' && (
         <div
           style={{ padding: '18px 20px 28px', display: 'flex', flexDirection: 'column', gap: 16 }}
         >
@@ -152,7 +158,9 @@ export function SignPage() {
             </span>
           </div>
           <div className="banner banner-warn" style={{ fontSize: 13, padding: '8px 12px' }}>
-            ينتهي هذا الرابط بعد {minutesLeft} دقيقة، ويُستخدم مرة واحدة.
+            {minutesLeft > 0 && minutesLeft <= view.link.ttlMinutes
+              ? `ينتهي هذا الرابط بعد ${minutesLeft} دقيقة، ويُستخدم مرة واحدة.`
+              : 'هذا الرابط صالح لمدة محدودة ويُستخدم مرة واحدة.'}
           </div>
           <div
             style={{
@@ -172,7 +180,7 @@ export function SignPage() {
               <Money halalas={view.link.amount} />
             </div>
             <div className="muted" style={{ fontSize: 14 }}>
-              {view.link.amountWords}
+              {amountInWords(view.link.amount)}
             </div>
             {view.link.details && (
               <div style={{ overflowWrap: 'anywhere' }}>البيان: {view.link.details}</div>

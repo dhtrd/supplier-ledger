@@ -19,7 +19,7 @@ import { Money } from '../../../shared/ui/RiyalSign';
 import { Sheet } from '../../../shared/ui/Sheet';
 import { useToast } from '../../../shared/ui/Toast';
 import { fb } from '../../../core/firebase';
-import { setArchived } from '../../accounts/data/accountsRepo';
+import { setAccountDeleted, setArchived } from '../../accounts/data/accountsRepo';
 import { GROUP_LABEL } from '../../accounts/domain/types';
 import { can } from '../../users/domain/types';
 import type { EntrySnapshot } from '../data/entriesRepo';
@@ -50,6 +50,7 @@ export function StatementPage() {
   }
   const [exporting, setExporting] = useState(false);
   const [archiveAsk, setArchiveAsk] = useState(false);
+  const [deleteAsk, setDeleteAsk] = useState(false);
   const [archBusy, setArchBusy] = useState(false);
   const desktop = useDesktop();
   const now = useNow();
@@ -133,6 +134,23 @@ export function StatementPage() {
     }
   };
 
+  const toggleDeleted = async (deleted: boolean) => {
+    setArchBusy(true);
+    try {
+      await setAccountDeleted(fb().db, user.uid, account, deleted, profile.name);
+      setDeleteAsk(false);
+      if (deleted) {
+        toast.info(`نُقل «${account.name}» إلى سلة المهملات. يُسترجع من الإعدادات ← سلة المهملات.`);
+        navigate('/', { replace: true });
+      } else toast.info(`استُرجع «${account.name}» إلى قائمة الحسابات.`);
+    } catch (e) {
+      reportError('account-trash', e);
+      toast.error(errorMessage(e));
+    } finally {
+      setArchBusy(false);
+    }
+  };
+
   /** Approved design «ب»: a small stamp beside the voucher number. */
   const stamp = (e: Entry) => {
     if (!isCashPayment(e) || e.legacy) return null;
@@ -196,6 +214,16 @@ export function StatementPage() {
               أرشفة
             </button>
           )}
+          {can.archiveAccounts(profile.role) && !account.deleted && (
+            <button
+              type="button"
+              className="btn-link"
+              style={{ fontSize: 14, color: 'var(--alayh)' }}
+              onClick={() => setDeleteAsk(true)}
+            >
+              حذف الحساب
+            </button>
+          )}
           <button
             type="button"
             className="btn-link"
@@ -215,6 +243,25 @@ export function StatementPage() {
         </div>
       </div>
 
+      {account.deleted && (
+        <div
+          className="banner banner-err no-print"
+          role="status"
+          style={{ margin: '8px var(--gutter)' }}
+        >
+          هذا الحساب في سلة المهملات ولا يظهر في القائمة.{' '}
+          {can.restoreFromTrash(profile.role) && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => void toggleDeleted(false)}
+              disabled={archBusy}
+            >
+              {archBusy ? 'جارٍ…' : 'استرجاعه'}
+            </button>
+          )}
+        </div>
+      )}
       {account.archived && (
         <div
           className="banner banner-warn no-print"
@@ -625,6 +672,38 @@ export function StatementPage() {
               {archBusy ? 'جارٍ…' : 'نعم، أرشفه'}
             </button>
             <button type="button" className="btn" onClick={() => setArchiveAsk(false)}>
+              تراجع
+            </button>
+          </div>
+        </Sheet>
+      )}
+      {deleteAsk && (
+        <Sheet
+          title={`نقل «${account.name}» إلى سلة المهملات؟`}
+          onClose={() => setDeleteAsk(false)}
+        >
+          <p style={{ margin: 0, lineHeight: 1.8 }}>
+            يختفي الحساب من القائمة ومن صافي الأرصدة ومن مدخل البيانات، وتبقى كل عملياته (
+            {entries.length} عملية) كما هي. يستطيع المالك والإدارة استرجاعه كاملاً من «الإعدادات ←
+            سلة المهملات»، ولا يُحذف شيء نهائياً. يصل تنبيه للمالك والإدارة.
+          </p>
+          {showBalances && fullBalance !== 0 && (
+            <div className="banner banner-warn" role="note">
+              رصيده ليس صفراً:{' '}
+              <strong className="num">{formatAmount(Math.abs(fullBalance))}</strong>{' '}
+              {SIDE_LABEL[balanceSide(fullBalance)]}. إن كان المقصود إخفاءه فقط فالأرشفة أنسب.
+            </div>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <button
+              type="button"
+              className="btn btn-danger"
+              onClick={() => void toggleDeleted(true)}
+              disabled={archBusy}
+            >
+              {archBusy ? 'جارٍ…' : 'نعم، انقله للسلة'}
+            </button>
+            <button type="button" className="btn" onClick={() => setDeleteAsk(false)}>
               تراجع
             </button>
           </div>

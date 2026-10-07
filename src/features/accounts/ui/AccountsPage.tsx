@@ -4,19 +4,20 @@ import { errorMessage, reportError } from '../../../core/errors';
 import { fb } from '../../../core/firebase';
 import { useReady } from '../../../core/session';
 import { ErrorBox, Loading } from '../../../core/Shell';
-import { balanceSide, formatAmount, normalizeDigits, SIDE_LABEL } from '../../../shared/lib/money';
+import { balanceSide, formatAmount, SIDE_LABEL } from '../../../shared/lib/money';
+import { searchKey } from '../../../shared/lib/text';
 import { useBlobUrl } from '../../../shared/ui/hooks';
 import { sniffMime } from '../../../shared/ui/Logo';
 import { can } from '../../users/domain/types';
 import { todayRiyadh } from '../../../shared/lib/dates';
 import { useToast } from '../../../shared/ui/Toast';
+import { sharedWatch } from '../../../shared/lib/sharedWatch';
 import {
   accountTotals,
   getAccounts,
   lastMovement,
-  listAccounts,
   setArchived,
-  type AccountTotals,
+  watchAllAccounts,
 } from '../data/accountsRepo';
 import {
   ARCHIVE_SUGGEST_DAYS,
@@ -26,7 +27,13 @@ import {
 } from '../domain/archive';
 import { GROUP_LABEL, initialOf, type Account, type AccountGroup } from '../domain/types';
 
-type Row = Account & { totals: AccountTotals | null };
+/** Balance, live entries and latest date shown for one account. */
+interface Sum {
+  balance: number;
+  count: number;
+  lastDate: string | null;
+}
+type Row = Account & { sum: Sum | null };
 type Filter = AccountGroup | 'all' | 'archived';
 
 const SNOOZE_KEY = 'sl:archive-suggest-snooze';
@@ -47,12 +54,14 @@ function snooze(): void {
 
 export function AccountsPage() {
   const { profile, settings } = useReady();
-  const [rows, setRows] = useState<Row[] | null>(null);
+  const [accounts, setAccounts] = useState<Account[] | null>(null);
+  /** Sums for accounts whose running totals are not initialised yet (backfill pending). */
+  const [fallback, setFallback] = useState<Record<string, Sum>>({});
   const [error, setError] = useState('');
   const [q, setQ] = useState('');
   const [group, setGroup] = useState<Filter>('all');
   const [archivedOpen, setArchivedOpen] = useState(false);
-  const [suggest, setSuggest] = useState<string[]>([]);
+  const [dismissed, setDismissed] = useState(() => snoozed());
   const [archiving, setArchiving] = useState(false);
   const { user } = useReady();
   const toast = useToast();
@@ -62,62 +71,110 @@ export function AccountsPage() {
   const [reloadKey, setReloadKey] = useState(0);
   const retry = () => {
     setError('');
-    setRows(null);
+    setAccounts(null);
     setReloadKey((k) => k + 1);
   };
 
+  // Managers: one live, shared listener on the accounts (with the device cache,
+  // reopening the list re-reads only changed accounts). Data-entry users read
+  // their few assigned accounts.
   useEffect(() => {
-    let alive = true;
     const { db } = fb();
-    (async () => {
-      const accounts = isManager
-        ? await listAccounts(db)
-        : await getAccounts(db, assignedKey ? assignedKey.split(',') : []);
-      accounts.sort((a, b) => a.name.localeCompare(b.name, 'ar'));
-      // Data-entry users never see archived accounts (the rules close their statements).
-      const visible = isManager ? accounts : accounts.filter((a) => !a.archived);
-      const totals = await Promise.all(visible.map((a) => accountTotals(db, a.id)));
-      const loaded = visible.map((a, i) => ({ ...a, totals: totals[i] ?? null }));
-      if (alive) setRows(loaded);
-      // Suggest archiving settled, idle accounts (managers; at most once per snooze).
-      if (!isManager || snoozed()) return;
-      const check = loaded.filter((r) =>
-        needsLastMovement({
-          archived: r.archived,
-          balance: r.totals?.balance ?? 1,
-          count: r.totals?.count ?? 0,
-        }),
-      );
-      const dates = await Promise.all(check.map((r) => lastMovement(db, r.id)));
-      const ids = archiveCandidates(
-        check.map((r, i) => ({
-          id: r.id,
-          archived: r.archived,
-          balance: r.totals?.balance ?? 1,
-          count: r.totals?.count ?? 0,
-          lastDate: dates[i] ?? null,
-        })),
-        todayRiyadh(),
-      );
-      if (alive) setSuggest(ids);
-    })().catch((e) => {
+    const fail = (e: unknown) => {
       reportError('accounts', e);
-      if (alive) setError(errorMessage(e));
-    });
+      setError(errorMessage(e));
+    };
+    if (isManager)
+      return sharedWatch<Account[]>(
+        'accounts:all',
+        (n, f) => watchAllAccounts(db, n, f),
+        setAccounts,
+        fail,
+      );
+    let alive = true;
+    getAccounts(db, assignedKey ? assignedKey.split(',') : [])
+      .then((a) => alive && setAccounts(a))
+      .catch(fail);
     return () => {
       alive = false;
     };
   }, [isManager, assignedKey, reloadKey]);
 
+  // Accounts without running totals yet: sum their entries on the server once.
+  useEffect(() => {
+    if (!accounts) return;
+    const { db } = fb();
+    const missing = accounts.filter((a) => !a.deleted && !a.totals && !(a.id in fallback));
+    if (!missing.length) return;
+    let alive = true;
+    Promise.all(
+      missing.map(async (a) => {
+        const t = await accountTotals(db, a.id);
+        const idle =
+          isManager &&
+          needsLastMovement({ archived: a.archived, balance: t.balance, count: t.count });
+        return [a.id, { ...t, lastDate: idle ? await lastMovement(db, a.id) : null }] as const;
+      }),
+    )
+      .then((pairs) => alive && setFallback((f) => ({ ...f, ...Object.fromEntries(pairs) })))
+      .catch((e: unknown) => {
+        reportError('accounts-totals', e);
+        if (alive) setError(errorMessage(e));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [accounts, fallback, isManager]);
+
+  const rows = useMemo<Row[] | null>(() => {
+    if (!accounts) return null;
+    return (
+      accounts
+        // Trash never shows; data-entry users never see archived accounts.
+        .filter((a) => !a.deleted && (isManager || !a.archived))
+        .map((a) => ({
+          ...a,
+          sum: a.totals
+            ? {
+                balance: a.totals.balance,
+                count: a.totals.entryCount,
+                lastDate: a.totals.lastDate || null,
+              }
+            : (fallback[a.id] ?? null),
+        }))
+        .sort((x, y) => x.name.localeCompare(y.name, 'ar'))
+    );
+  }, [accounts, fallback, isManager]);
+
+  // Suggest archiving settled, idle accounts (managers; not while snoozed).
+  const suggest = useMemo(() => {
+    if (!rows || !isManager || dismissed) return [];
+    return archiveCandidates(
+      rows
+        .filter((r) => r.sum)
+        .map((r) => ({
+          id: r.id,
+          archived: r.archived,
+          balance: r.sum!.balance,
+          count: r.sum!.count,
+          lastDate: r.sum!.lastDate,
+        })),
+      todayRiyadh(),
+    );
+  }, [rows, isManager, dismissed]);
+
   const searching = q.trim().length > 0;
   /** Group + search match, archived included (the net balance counts them). */
   const matching = useMemo(() => {
     if (!rows) return [];
-    const needle = normalizeDigits(q.trim()).toLowerCase();
+    const needle = searchKey(q);
+    const phoneNeedle = needle.replace(/\D/g, '');
     return rows.filter(
       (r) =>
         (group === 'all' || group === 'archived' || r.group === group) &&
-        (!needle || r.name.toLowerCase().includes(needle) || r.phone.includes(needle)),
+        (!needle ||
+          searchKey(r.name).includes(needle) ||
+          (phoneNeedle.length >= 3 && r.phone.includes(phoneNeedle))),
     );
   }, [rows, q, group]);
   const archivedRows = matching.filter((r) => r.archived);
@@ -127,18 +184,15 @@ export function AccountsPage() {
   const archivedCount = rows?.filter((r) => r.archived).length ?? 0;
 
   const showBalances = can.seeBalances(profile.role);
-  const net = matching.reduce((s, r) => s + (r.totals?.balance ?? 0), 0);
+  const net = matching.reduce((s, r) => s + (r.sum?.balance ?? 0), 0);
   const suggested = (rows ?? []).filter((r) => suggest.includes(r.id) && !r.archived);
 
   const archiveSuggested = async () => {
     setArchiving(true);
     try {
       for (const r of suggested) await setArchived(fb().db, user.uid, r, true);
-      setRows(
-        (list) => list?.map((r) => (suggest.includes(r.id) ? { ...r, archived: true } : r)) ?? null,
-      );
+      // The live listener brings the new archived flags.
       toast.info(`أُرشف ${suggested.length} حساب. تجدها في «المؤرشفة».`);
-      setSuggest([]);
     } catch (e) {
       reportError('archive-suggested', e);
       toast.error(errorMessage(e));
@@ -246,7 +300,7 @@ export function AccountsPage() {
                   className="btn btn-sm btn-quiet"
                   onClick={() => {
                     snooze();
-                    setSuggest([]);
+                    setDismissed(true);
                   }}
                 >
                   لاحقاً
@@ -290,7 +344,7 @@ export function AccountsPage() {
 
 function AccountRow({ row, showBalance }: { row: Row; showBalance: boolean }) {
   const logo = useBlobUrl(row.logo, sniffMime(row.logo));
-  const bal = row.totals?.balance ?? 0;
+  const bal = row.sum?.balance ?? 0;
   const side = balanceSide(bal);
   return (
     <Link to={`/a/${row.id}`} className={`list-row${row.archived ? ' is-archived' : ''}`}>
@@ -313,7 +367,7 @@ function AccountRow({ row, showBalance }: { row: Row; showBalance: boolean }) {
         <span className="muted num" style={{ display: 'block', fontSize: 13 }}>
           {GROUP_LABEL[row.group]}
           {row.phone && ` · ${row.phone}`}
-          {row.totals && ` · ${row.totals.count} عملية`}
+          {row.sum && ` · ${row.sum.count} عملية`}
         </span>
       </span>
       {showBalance && (
@@ -327,10 +381,10 @@ function AccountRow({ row, showBalance }: { row: Row; showBalance: boolean }) {
                 side === 'lah' ? 'var(--lah)' : side === 'alayh' ? 'var(--alayh)' : 'var(--muted)',
             }}
           >
-            {formatAmount(Math.abs(bal))}
+            {row.sum ? formatAmount(Math.abs(bal)) : '…'}
           </span>
           <span className="muted" style={{ display: 'block', fontSize: 12 }}>
-            {SIDE_LABEL[side]}
+            {row.sum ? SIDE_LABEL[side] : ''}
           </span>
         </span>
       )}

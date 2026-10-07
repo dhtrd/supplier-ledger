@@ -1,0 +1,38 @@
+# Manual maintenance jobs (Actions → Maintenance → Run workflow).
+#  - totals: initialise / verify the running totals of every account.
+name: Maintenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'Task to run'
+        required: true
+        default: totals
+        type: choice
+        options: [totals]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maintenance
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      # firebase-admin loads Firestore from an optional dependency: keep optionals.
+      - run: npm ci
+      - name: Running totals
+        if: inputs.task == 'totals'
+        run: node scripts/maintenance/totals.ts

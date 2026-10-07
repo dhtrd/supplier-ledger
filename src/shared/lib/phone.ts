@@ -6,7 +6,10 @@ import { normalizeDigits } from './money';
  * mobile number, so the UI can block sending instead of opening a bad link.
  */
 export function toWhatsAppNumber(raw: string): string | null {
-  const digits = normalizeDigits(raw).replace(/^\+/, '').replace(/\D/g, '');
+  const digits = normalizeDigits(raw)
+    .replace(/^\+/, '')
+    .replace(/\D/g, '')
+    .replace(/^00(?=966)/, '');
   let local: string;
   if (/^9665\d{8}$/.test(digits)) local = digits.slice(3);
   else if (/^05\d{8}$/.test(digits)) local = digits.slice(1);

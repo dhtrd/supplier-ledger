@@ -34,6 +34,7 @@ import {
 import { encryptText } from '../../src/shared/lib/backupCrypto.ts';
 import { fileStamp, todayRiyadh } from '../../src/shared/lib/dates.ts';
 import { encode, type Snapshot } from './snapshot.ts';
+import { syncTotals } from '../lib/totals.ts';
 
 const COLLECTIONS = [
   'users',
@@ -142,6 +143,18 @@ runMain(async () => {
       }
     }
 
+    // Daily: verify every account's running totals (also initialises new ones).
+    let totalsNote = '';
+    if (!requests.length) {
+      const t = await syncTotals(db);
+      totalsNote = `, totals ${t.initialised} initialised / ${t.corrected.length} corrected`;
+      // Visible in the Actions run (no names/amounts: the logs are public).
+      if (t.corrected.length)
+        console.log(
+          `::warning::${t.corrected.length} account totals were wrong and were corrected`,
+        );
+    }
+
     // ---- 4. status ---------------------------------------------------------
     await db.doc('meta/backup').set({
       lastBackupAt: Timestamp.fromMillis(snapshot.takenAt),
@@ -153,7 +166,7 @@ runMain(async () => {
     });
     for (const r of requests) await r.ref.update({ status: 'done', doneAt: Timestamp.now(), file });
     console.log(
-      `backup ok: ${docs} documents, ${moved} images moved, ${expired.length} old folders removed, ${oldNotes} old notifications removed`,
+      `backup ok: ${docs} documents, ${moved} images moved, ${expired.length} old folders removed, ${oldNotes} old notifications removed${totalsNote}`,
     );
     if (moveError)
       throw new Error(

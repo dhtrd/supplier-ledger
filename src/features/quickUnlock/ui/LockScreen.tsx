@@ -6,7 +6,7 @@ import { clock12, longDay } from '../../../shared/lib/dates';
 import { APP_NAME, BrandMark } from '../../../shared/ui/BrandMark';
 import { useDesktop, useNow } from '../../../shared/ui/hooks';
 import { getFailures } from '../../auth/data/lockoutRepo';
-import { MAX_FAILED_ATTEMPTS, remainingAttempts } from '../../auth/domain/lockout';
+import { LOCK_MINUTES, MAX_FAILED_ATTEMPTS, remainingAttempts } from '../../auth/domain/lockout';
 import { biometricErrorMessage, biometricProof, hasBiometric } from '../data/biometric';
 import { deviceId } from '../data/device';
 import { isDenied, unlockWithProof } from '../data/screenLockRepo';
@@ -15,7 +15,7 @@ import { normalizeDigits, PIN_LENGTH, pinProof } from '../domain/pin';
 type Locked = Extract<SessionState, { status: 'screenLocked' }>;
 type Msg = { text: string; kind: 'err' | 'info' } | null;
 
-const LOCKED_OUT = `أُقفل الحساب بعد ${MAX_FAILED_ATTEMPTS} محاولات خاطئة. لا يفتحه إلا المالك.`;
+const LOCKED_OUT = `أُقفل الحساب بعد ${MAX_FAILED_ATTEMPTS} محاولات خاطئة. يُفتح تلقائياً بعد ${LOCK_MINUTES} دقيقة، أو يفكّه المالك قبل ذلك.`;
 
 /**
  * Approved lock screens: «د الحبر الليلي» on phones, «ط» on screens ≥ 900 px.

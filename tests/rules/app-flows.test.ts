@@ -238,7 +238,7 @@ describe('signing flow', () => {
     const token = await createSignLink(staff, 'entry', {
       account: account!,
       entry: pay.entry,
-      payerName: 'x',
+      payerName: 'شركة الضبيبي',
       ttlMinutes: 60,
       pendingForEntry: [],
     });
@@ -258,7 +258,7 @@ describe('signing flow', () => {
     const t2 = await createSignLink(staff, 'entry', {
       account: account!,
       entry: { ...pay.entry, amount: 90000, signed: -90000 },
-      payerName: 'x',
+      payerName: 'شركة الضبيبي',
       ttlMinutes: 60,
       pendingForEntry: [],
     });
@@ -284,7 +284,7 @@ describe('signing flow', () => {
       createSignLink(staff, 'admin', {
         account: account!,
         entry: pay.entry,
-        payerName: 'x',
+        payerName: 'شركة الضبيبي',
         ttlMinutes: 30,
         pendingForEntry: [],
       }),
@@ -384,7 +384,7 @@ describe('returns, discounts and backup requests', () => {
       createSignLink(staff, 'entry', {
         account: account!,
         entry: ret.entry,
-        payerName: 'x',
+        payerName: 'شركة الضبيبي',
         ttlMinutes: 60,
         pendingForEntry: [],
       }),

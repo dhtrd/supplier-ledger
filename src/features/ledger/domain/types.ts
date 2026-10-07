@@ -1,3 +1,4 @@
+import { cleanText } from '../../../shared/lib/text';
 import { isIsoDate } from '../../../shared/lib/dates';
 import { parseAmount } from '../../../shared/lib/money';
 import type { StatementInput } from './statement';
@@ -64,6 +65,11 @@ export interface EntryFormInput {
   date: string;
   details: string;
   attachmentCount: number;
+  /**
+   * A note needs text — except when editing a migrated note that never had
+   * any (so its date can still be fixed). Default true.
+   */
+  requireNoteText?: boolean;
 }
 
 export type EntryFormResult =
@@ -81,9 +87,10 @@ export function validateEntryForm(v: EntryFormInput): EntryFormResult {
     else amount = parsed;
   }
   if (!isIsoDate(v.date)) errors.date = 'اختر تاريخاً صحيحاً.';
-  const details = v.details.trim();
+  const details = cleanText(v.details, { keepNewlines: true });
   if (details.length > MAX_DETAILS) errors.details = `التفاصيل أطول من ${MAX_DETAILS} حرف.`;
-  if (v.type === 'note' && !details) errors.details = 'اكتب نص الملاحظة.';
+  if (v.type === 'note' && !details && v.requireNoteText !== false)
+    errors.details = 'اكتب نص الملاحظة.';
   if (v.attachmentCount > MAX_ATTACHMENTS)
     errors.attachments = `الحد ${MAX_ATTACHMENTS} صور لكل عملية.`;
   if (Object.keys(errors).length) return { ok: false, errors };
@@ -93,4 +100,17 @@ export function validateEntryForm(v: EntryFormInput): EntryFormResult {
 /** Signed vouchers are frozen: no edit, no delete (also enforced by the rules). */
 export function isLocked(e: Pick<Entry, 'signature'>): boolean {
   return e.signature !== null;
+}
+
+/** Owner decision 2026-10-07: dates further ahead than this ask for a second save press. */
+export const FAR_FUTURE_DAYS = 30;
+
+/** Days from `today` to `date` (both YYYY-MM-DD); positive = in the future. */
+export function daysAhead(date: string, today: string): number {
+  const ms = (iso: string) => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10));
+  return Math.round((ms(date) - ms(today)) / 86_400_000);
+}
+
+export function isFarFuture(date: string, today: string): boolean {
+  return daysAhead(date, today) > FAR_FUTURE_DAYS;
 }
