@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { errorMessage, reportError } from '../../../core/errors';
+import { AppError, errorMessage, reportError } from '../../../core/errors';
 import { fb } from '../../../core/firebase';
 import { useReady } from '../../../core/session';
 import { displayDate, formatDateTime } from '../../../shared/lib/dates';
@@ -78,7 +78,7 @@ export function EntrySheet({
     const win = mode === 'whatsapp' && waNumber ? window.open('', '_blank') : null;
     setBusy(true);
     try {
-      if (e.voucherNo === null) throw new Error('لا يوجد رقم سند لهذه الدفعة.');
+      if (e.voucherNo === null) throw new AppError('لا يوجد رقم سند لهذه الدفعة.');
       const pending = links.filter((l) => l.entryId === e.id && l.status === 'pending');
       const token = await createSignLink(fb().db, user.uid, {
         account,

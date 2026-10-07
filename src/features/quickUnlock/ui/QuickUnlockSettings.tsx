@@ -206,9 +206,10 @@ export function QuickUnlockSettings() {
             type="password"
             inputMode="numeric"
             autoComplete="new-password"
-            maxLength={6}
             value={pin}
-            onChange={(e) => setPinText(normalizeDigits(e.target.value).replace(/\D/g, ''))}
+            onChange={(e) =>
+              setPinText(normalizeDigits(e.target.value).replace(/\D/g, '').slice(0, 6))
+            }
           />
           <label htmlFor="qu-pin2" style={{ fontSize: 14, fontWeight: 500 }}>
             تأكيد الرمز
@@ -219,9 +220,10 @@ export function QuickUnlockSettings() {
             type="password"
             inputMode="numeric"
             autoComplete="new-password"
-            maxLength={6}
             value={pin2}
-            onChange={(e) => setPin2(normalizeDigits(e.target.value).replace(/\D/g, ''))}
+            onChange={(e) =>
+              setPin2(normalizeDigits(e.target.value).replace(/\D/g, '').slice(0, 6))
+            }
           />
           {bioAvailable && (
             <label style={{ display: 'flex', gap: 8, alignItems: 'center', minHeight: 44 }}>

@@ -62,7 +62,9 @@ function below1000(n: number, g: Gender, construct = false): string {
     else {
       const one = r % 10;
       const ten = TENS[Math.floor(r / 10)] as string;
-      parts.push(one ? `${ONES[g][one]} و${ten}` : ten);
+      // Feminine compound units: «إحدى وعشرون هللة», not «واحدة وعشرون».
+      const unit = g === 'f' && one === 1 ? 'إحدى' : (ONES[g][one] as string);
+      parts.push(one ? `${unit} و${ten}` : ten);
     }
   }
   return parts.join(' و');

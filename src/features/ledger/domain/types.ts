@@ -1,3 +1,4 @@
+import { cleanText } from '../../../shared/lib/text';
 import { isIsoDate } from '../../../shared/lib/dates';
 import { parseAmount } from '../../../shared/lib/money';
 import type { StatementInput } from './statement';
@@ -64,6 +65,11 @@ export interface EntryFormInput {
   date: string;
   details: string;
   attachmentCount: number;
+  /**
+   * A note needs text — except when editing a migrated note that never had
+   * any (so its date can still be fixed). Default true.
+   */
+  requireNoteText?: boolean;
 }
 
 export type EntryFormResult =
@@ -81,9 +87,10 @@ export function validateEntryForm(v: EntryFormInput): EntryFormResult {
     else amount = parsed;
   }
   if (!isIsoDate(v.date)) errors.date = 'اختر تاريخاً صحيحاً.';
-  const details = v.details.trim();
+  const details = cleanText(v.details, { keepNewlines: true });
   if (details.length > MAX_DETAILS) errors.details = `التفاصيل أطول من ${MAX_DETAILS} حرف.`;
-  if (v.type === 'note' && !details) errors.details = 'اكتب نص الملاحظة.';
+  if (v.type === 'note' && !details && v.requireNoteText !== false)
+    errors.details = 'اكتب نص الملاحظة.';
   if (v.attachmentCount > MAX_ATTACHMENTS)
     errors.attachments = `الحد ${MAX_ATTACHMENTS} صور لكل عملية.`;
   if (Object.keys(errors).length) return { ok: false, errors };

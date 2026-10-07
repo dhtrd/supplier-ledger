@@ -4,7 +4,8 @@ import { errorMessage, reportError } from '../../../core/errors';
 import { fb } from '../../../core/firebase';
 import { useReady } from '../../../core/session';
 import { ErrorBox, Loading } from '../../../core/Shell';
-import { balanceSide, formatAmount, normalizeDigits, SIDE_LABEL } from '../../../shared/lib/money';
+import { balanceSide, formatAmount, SIDE_LABEL } from '../../../shared/lib/money';
+import { searchKey } from '../../../shared/lib/text';
 import { useBlobUrl } from '../../../shared/ui/hooks';
 import { sniffMime } from '../../../shared/ui/Logo';
 import { can } from '../../users/domain/types';
@@ -113,11 +114,14 @@ export function AccountsPage() {
   /** Group + search match, archived included (the net balance counts them). */
   const matching = useMemo(() => {
     if (!rows) return [];
-    const needle = normalizeDigits(q.trim()).toLowerCase();
+    const needle = searchKey(q);
+    const phoneNeedle = needle.replace(/\D/g, '');
     return rows.filter(
       (r) =>
         (group === 'all' || group === 'archived' || r.group === group) &&
-        (!needle || r.name.toLowerCase().includes(needle) || r.phone.includes(needle)),
+        (!needle ||
+          searchKey(r.name).includes(needle) ||
+          (phoneNeedle.length >= 3 && r.phone.includes(phoneNeedle))),
     );
   }, [rows, q, group]);
   const archivedRows = matching.filter((r) => r.archived);

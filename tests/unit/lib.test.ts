@@ -1,3 +1,5 @@
+import { toLocalMobile } from '../../src/shared/lib/phone';
+import { cleanText, searchKey } from '../../src/shared/lib/text';
 import { describe, expect, it } from 'vitest';
 import { amountInWords, numberToWords } from '../../src/shared/lib/tafqit';
 import {
@@ -135,14 +137,37 @@ describe('amount field accepts only an amount while typing', () => {
     expect(cleanAmountInput('١٢٣٤')).toBe('1234');
     expect(cleanAmountInput('1,500')).toBe('1500');
     expect(cleanAmountInput('-50')).toBe('50');
-  });
-  it('one decimal point, at most two decimals, at most 9 whole digits', () => {
-    expect(cleanAmountInput('12.345')).toBe('12.34');
     expect(cleanAmountInput('١٢٫٥')).toBe('12.5');
-    expect(cleanAmountInput('1.2.3')).toBe('1.23');
-    expect(cleanAmountInput('.5')).toBe('0.5');
-    expect(cleanAmountInput('12.')).toBe('12.');
-    expect(cleanAmountInput('12345678901')).toBe('123456789');
+  });
+  it('never silently cuts: bad shapes stay visible and fail validation', () => {
+    expect(cleanAmountInput('12.345')).toBe('12.345');
+    expect(parseAmount('12.345')).toBeNull();
+    expect(cleanAmountInput('1.2.3')).toBe('1.2.3');
+    expect(parseAmount('1.2.3')).toBeNull();
+    expect(parseAmount(cleanAmountInput('12345678901234'))).toBeNull();
     expect(parseAmount(cleanAmountInput('١٬٥٠٠٫٧٥ ريال'))).toBe(150075);
+  });
+});
+
+describe('audit fixes 2026-10-07', () => {
+  it('cleanText removes invisible and direction-changing characters', () => {
+    expect(cleanText('​')).toBe('');
+    expect(cleanText('‮abc‬')).toBe('abc');
+    expect(cleanText(' أحمد⁦ ')).toBe('أحمد');
+    expect(cleanText('سطر\nثانٍ')).toBe('سطر ثانٍ');
+    expect(cleanText('سطر\nثانٍ', { keepNewlines: true })).toBe('سطر\nثانٍ');
+  });
+  it('search keeps spaces and matches Arabic digits', () => {
+    expect(searchKey(' شركة  الأمل ')).toBe('شركة الأمل');
+    expect(searchKey('مورد ٣')).toBe('مورد 3');
+  });
+  it('accepts the 00966 international prefix', () => {
+    expect(toLocalMobile('00966501234567')).toBe('0501234567');
+    expect(toLocalMobile('٠٠٩٦٦٥٠١٢٣٤٥٦٧')).toBe('0501234567');
+  });
+  it('feminine compound units: إحدى وعشرون هللة', () => {
+    expect(amountInWords(21)).toContain('إحدى وعشرون هللة');
+    expect(amountInWords(10091)).toContain('إحدى وتسعون هللة');
+    expect(amountInWords(2100)).toContain('واحد وعشرون ريال');
   });
 });

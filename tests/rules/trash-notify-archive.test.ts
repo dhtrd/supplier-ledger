@@ -65,7 +65,7 @@ async function signPay1(): Promise<string> {
   const token = await createSignLink(staff, 'entry', {
     account: account!,
     entry: pay.entry,
-    payerName: 'x',
+    payerName: 'شركة الضبيبي',
     ttlMinutes: 60,
     pendingForEntry: [],
   });
@@ -230,7 +230,7 @@ describe('trash', () => {
     await assertFails(restoreEntry(staff, 'entry', ACC_A, inTrash, CTX));
     await restoreEntry(as('admin'), 'admin', ACC_A, inTrash, {
       actorName: 'admin',
-      accountName: 'x',
+      accountName: 'حساب accA',
     });
     const back = (await getEntry(staff, ACC_A, 'pay1'))!;
     expect(back.entry.deleted).toBe(false);

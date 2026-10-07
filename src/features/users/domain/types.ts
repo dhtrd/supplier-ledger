@@ -1,3 +1,4 @@
+import { cleanText } from '../../../shared/lib/text';
 export type Role = 'owner' | 'admin' | 'entry';
 
 /** users/{uid} */
@@ -68,7 +69,7 @@ export function validateUserForm(v: {
   email: string;
 }): Partial<Record<'name' | 'email', string>> {
   const errors: Partial<Record<'name' | 'email', string>> = {};
-  const name = v.name.trim();
+  const name = cleanText(v.name);
   if (!name) errors.name = 'أدخل الاسم.';
   else if (name.length > 80) errors.name = 'الاسم أطول من 80 حرفاً.';
   const email = v.email.trim();

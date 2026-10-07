@@ -1,3 +1,4 @@
+import { cleanText } from '../../../shared/lib/text';
 import type { Role } from '../../users/domain/types';
 import { DEFAULT_ROLE_LABELS } from '../../users/domain/types';
 
@@ -47,10 +48,10 @@ export function validateSettings(s: AppSettings): string | null {
     s.idleCountdownSeconds > COUNTDOWN_MAX
   )
     return `العد التنازلي بين ${COUNTDOWN_MIN} و${COUNTDOWN_MAX} ثانية.`;
-  if (!s.payerName.trim()) return 'أدخل اسم الدافع.';
+  if (!cleanText(s.payerName)) return 'أدخل اسم الدافع.';
   if (s.payerName.length > 100) return 'اسم الدافع أطول من 100 حرف.';
   for (const r of ['owner', 'admin', 'entry'] as const) {
-    const l = s.roleLabels[r].trim();
+    const l = cleanText(s.roleLabels[r]);
     if (!l) return 'لا تترك مسمى دور فارغاً.';
     if (l.length > 40) return 'مسمى الدور أطول من 40 حرفاً.';
   }

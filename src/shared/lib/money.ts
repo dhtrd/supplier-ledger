@@ -15,23 +15,15 @@ export function normalizeDigits(input: string): string {
     .replace(/[٬،,\s]/g, '');
 }
 
-/** Largest amount accepted: 1,000,000,000 SAR (the rules cap halalas at 10^11). */
-const MAX_WHOLE_DIGITS = 9;
-
 /**
- * Keeps an amount field to what an amount can be while the user types:
- * digits (Arabic or Western), one decimal point, at most two decimals.
- * Letters and other symbols are dropped as they are typed.
+ * What the amount field keeps while the user types: digits (Arabic or
+ * Western, converted) and decimal points. Letters and other symbols are
+ * dropped. Nothing else is changed — too many decimals, two points or an
+ * amount above the limit stay visible and are reported by `parseAmount` on
+ * save, instead of being silently cut.
  */
 export function cleanAmountInput(raw: string): string {
-  const s = normalizeDigits(raw).replace(/[^\d.]/g, '');
-  const dot = s.indexOf('.');
-  const whole = (dot < 0 ? s : s.slice(0, dot)).slice(0, MAX_WHOLE_DIGITS);
-  if (dot < 0) return whole;
-  return `${whole || '0'}.${s
-    .slice(dot + 1)
-    .replace(/\./g, '')
-    .slice(0, 2)}`;
+  return normalizeDigits(raw).replace(/[^\d.]/g, '');
 }
 
 /**

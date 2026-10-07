@@ -4,13 +4,17 @@ export interface SignaturePadHandle {
   clear: () => void;
   isEmpty: () => boolean;
   /** PNG data URL, downscaled until it fits `maxChars`. */
-  toPng: (maxChars: number) => string | null;
+  /** A PNG data URL, or why there is none. */
+  toPng: (maxChars: number) => string | 'empty' | 'tooLarge';
 }
 
 const W = 680;
 const H = 300;
 
 /** Finger/mouse signature on a canvas (pointer events, no library). */
+/** Minimum total stroke length (canvas px) before «أقرّ بالاستلام» is enabled. */
+const MIN_STROKE = 60;
+
 export const SignaturePad = forwardRef<
   SignaturePadHandle,
   { labelledBy: string; onChange: (hasInk: boolean) => void }
@@ -18,6 +22,8 @@ export const SignaturePad = forwardRef<
   const canvas = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
   const last = useRef<[number, number] | null>(null);
+  /** Total stroke length drawn (canvas px): a tap or a tiny scribble is not a signature. */
+  const length = useRef(0);
   const [ink, setInk] = useState(false);
 
   const ctx = () => canvas.current?.getContext('2d') ?? null;
@@ -35,6 +41,7 @@ export const SignaturePad = forwardRef<
     c.lineTo(W - 40, H - 64);
     c.stroke();
     c.setLineDash([]);
+    length.current = 0;
     setInk(false);
     onChange(false);
   }, [onChange]);
@@ -46,18 +53,18 @@ export const SignaturePad = forwardRef<
     isEmpty: () => !ink,
     toPng: (maxChars) => {
       const src = canvas.current;
-      if (!src || !ink) return null;
+      if (!src || !ink) return 'empty';
       for (const scale of [1, 0.75, 0.5, 0.35]) {
         const out = document.createElement('canvas');
         out.width = Math.round(W * scale);
         out.height = Math.round(H * scale);
         const o = out.getContext('2d');
-        if (!o) return null;
+        if (!o) return 'tooLarge';
         o.drawImage(src, 0, 0, out.width, out.height);
         const url = out.toDataURL('image/png');
         if (url.length <= maxChars) return url;
       }
-      return null;
+      return 'tooLarge';
     },
   }));
 
@@ -102,16 +109,17 @@ export const SignaturePad = forwardRef<
         const p = point(e);
         last.current = p;
         line(p, p);
-        if (!ink) {
-          setInk(true);
-          onChange(true);
-        }
       }}
       onPointerMove={(e) => {
         if (!drawing.current || !last.current) return;
         const p = point(e);
+        length.current += Math.hypot(p[0] - last.current[0], p[1] - last.current[1]);
         line(last.current, p);
         last.current = p;
+        if (!ink && length.current >= MIN_STROKE) {
+          setInk(true);
+          onChange(true);
+        }
       }}
       onPointerUp={() => {
         drawing.current = false;

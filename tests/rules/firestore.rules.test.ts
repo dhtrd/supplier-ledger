@@ -54,12 +54,17 @@ async function auditedEdit(
   patch: Record<string, unknown>,
 ) {
   const auditId = `a_${Math.random().toString(36).slice(2)}`;
+  // `before` must be the document's real previous state (rules check it).
+  let before: Record<string, unknown> = {};
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    before = (await getDoc(doc(ctx.firestore() as unknown as Firestore, path))).data() ?? {};
+  });
   const b = writeBatch(db);
   b.set(doc(db, `auditLog/${auditId}`), {
     actor: uid,
     action: patch.deleted ? 'delete' : 'update',
     path,
-    before: {},
+    before,
     at: serverTimestamp(),
   });
   b.update(doc(db, path), { ...patch, auditId, updatedBy: uid, updatedAt: serverTimestamp() });
@@ -337,7 +342,7 @@ describe('criteria 3–5 — signing links', () => {
         entryId: 'pay1',
         accountName: 'x',
         accountPhone: '',
-        payerName: 'x',
+        payerName: 'شركة الضبيبي',
         amount: 50000,
         amountWords: 'x',
         date: '2026-09-02',
@@ -369,7 +374,7 @@ describe('criteria 3–5 — signing links', () => {
         entryId: 'pay1',
         accountName: 'x',
         accountPhone: '',
-        payerName: 'x',
+        payerName: 'شركة الضبيبي',
         amount: 50000,
         amountWords: 'x',
         date: '2026-09-02',
@@ -504,16 +509,29 @@ describe('attachments and the audit log', () => {
         at: serverTimestamp(),
       }),
     );
-    await assertSucceeds(
+    // A record on its own (not written together with the change it describes)
+    // is refused — even with a real path and a matching `before`.
+    await assertFails(
       setDoc(doc(db, 'auditLog/x2'), {
+        actor: 'entry',
+        action: 'update',
+        path: `accounts/${ACC_A}/entries/inv1`,
+        before: {},
+        at: serverTimestamp(),
+      }),
+    );
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore() as unknown as Firestore, 'auditLog/x3'), {
         actor: 'entry',
         action: 'update',
         path: 'p',
         before: {},
         at: serverTimestamp(),
-      }),
-    );
-    await assertFails(updateDoc(doc(as('owner'), 'auditLog/x2'), { path: 'q' }));
+      });
+    });
+    await assertFails(updateDoc(doc(as('owner'), 'auditLog/x3'), { path: 'q' }));
+    const { deleteDoc } = await import('firebase/firestore');
+    await assertFails(deleteDoc(doc(as('owner'), 'auditLog/x3')));
   });
   it('unknown collections are closed', async () => {
     await assertFails(setDoc(doc(as('owner'), 'random/doc'), { a: 1 }));

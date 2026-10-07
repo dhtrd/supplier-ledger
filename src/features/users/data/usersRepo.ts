@@ -1,3 +1,4 @@
+import { cleanText } from '../../../shared/lib/text';
 import {
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
@@ -78,7 +79,7 @@ export async function createUser(
   });
   try {
     await setDoc(doc(db, 'users', uid), {
-      name: input.name.trim(),
+      name: cleanText(input.name),
       email,
       role: input.role,
       active: input.active,
@@ -103,7 +104,7 @@ export async function updateUser(
   input: Omit<UserInput, 'email'>,
 ): Promise<void> {
   await updateDoc(doc(db, 'users', uid), {
-    name: input.name.trim(),
+    name: cleanText(input.name),
     role: input.role,
     active: input.active,
     assignedAccounts: input.role === 'entry' ? input.assignedAccounts : [],
@@ -115,7 +116,7 @@ export async function updateUser(
 /** The owner may change only his own display name. */
 export async function renameSelf(db: Firestore, uid: string, name: string): Promise<void> {
   await updateDoc(doc(db, 'users', uid), {
-    name: name.trim(),
+    name: cleanText(name),
     updatedAt: serverTimestamp(),
     updatedBy: uid,
   });

@@ -1,3 +1,4 @@
+import { cleanText } from '../../../shared/lib/text';
 import {
   Bytes,
   addDoc,
@@ -118,7 +119,7 @@ export async function accountTotals(db: Firestore, id: string): Promise<AccountT
 
 function payload(form: AccountForm, logo: Uint8Array | null) {
   return {
-    name: form.name.trim(),
+    name: cleanText(form.name),
     phone: storedPhone(form.phone),
     group: form.group,
     logo: logo ? Bytes.fromUint8Array(logo) : null,
