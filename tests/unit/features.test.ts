@@ -305,3 +305,24 @@ describe('sign-out note', () => {
     expect(m.peekLogoutReason()).toBe('');
   });
 });
+
+describe('WhatsApp signing message', () => {
+  it('has number, amount, date, then the link last', async () => {
+    const { signLinkMessage } = await import('../../src/features/signing/domain/message');
+    const { storedPhone } = await import('../../src/features/accounts/domain/types');
+    const m = signLinkMessage({
+      payerName: 'شركة الضبيبي',
+      voucherNo: 1489,
+      amount: 120000,
+      date: '2026-10-05',
+      minutes: 60,
+      url: 'https://x.io/#/s/abc',
+    }).split('\n');
+    expect(m[1]).toBe('رقم السند: 1489');
+    expect(m[2]).toBe('المبلغ: 1,200 ريال');
+    expect(m[3]).toBe('التاريخ: 2026/10/05');
+    expect(m.at(-1)).toBe('https://x.io/#/s/abc');
+    expect(storedPhone('+966 55 755 3590')).toBe('0557553590');
+    expect(storedPhone('')).toBe('');
+  });
+});

@@ -6,6 +6,7 @@ import { useReady } from '../../../core/session';
 import { displayDate, formatDateTime } from '../../../shared/lib/dates';
 import { balanceSide, formatAmount, SIDE_LABEL } from '../../../shared/lib/money';
 import { toWhatsAppNumber, whatsAppLink } from '../../../shared/lib/phone';
+import { signLinkMessage } from '../../signing/domain/message';
 import { amountInWords } from '../../../shared/lib/tafqit';
 import { useBlobUrl } from '../../../shared/ui/hooks';
 import { Money } from '../../../shared/ui/RiyalSign';
@@ -84,10 +85,14 @@ export function EntrySheet({
         pendingForEntry: pending,
       });
       const url = linkUrl(token, `${window.location.origin}${window.location.pathname}`);
-      const text =
-        `سند دفعة رقم ${e.voucherNo} من ${settings.payerName} إلى ${account.name}\n` +
-        `المبلغ: ${formatAmount(e.amount)} ريال\n` +
-        `للإقرار بالاستلام والتوقيع افتح الرابط (صالح ${settings.linkMinutes} دقيقة ولمرة واحدة):\n${url}`;
+      const text = signLinkMessage({
+        payerName: settings.payerName,
+        voucherNo: e.voucherNo,
+        amount: e.amount,
+        date: e.date,
+        minutes: settings.linkMinutes,
+        url,
+      });
       const wa = whatsAppLink(account.phone, text);
       setCreated({ url, wa });
       if (mode === 'copy') {

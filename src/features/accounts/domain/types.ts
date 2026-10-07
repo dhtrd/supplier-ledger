@@ -1,4 +1,5 @@
 import { normalizeDigits } from '../../../shared/lib/money';
+import { toLocalMobile } from '../../../shared/lib/phone';
 
 export type AccountGroup = 'suppliers' | 'customers' | 'general';
 
@@ -31,14 +32,20 @@ export function cleanPhone(raw: string): string {
   return normalizeDigits(raw).replace(/[^\d+]/g, '');
 }
 
+/** What is stored: 05XXXXXXXX, or '' when no number was given. */
+export function storedPhone(raw: string): string {
+  return toLocalMobile(cleanPhone(raw)) ?? '';
+}
+
 export function validateAccountForm(v: AccountForm): Partial<Record<keyof AccountForm, string>> {
   const errors: Partial<Record<keyof AccountForm, string>> = {};
   const name = v.name.trim();
   if (!name) errors.name = 'أدخل اسم الحساب.';
   else if (name.length > 120) errors.name = 'الاسم أطول من 120 حرفاً.';
+  // Owner decision: a number WhatsApp cannot use is never saved.
   const phone = cleanPhone(v.phone);
-  if (phone.length > 20) errors.phone = 'رقم الجوال طويل جداً.';
-  else if (phone && !/^\+?\d{6,15}$/.test(phone)) errors.phone = 'رقم الجوال غير صحيح.';
+  if (phone && !toLocalMobile(phone))
+    errors.phone = 'رقم الجوال غير صحيح. اكتبه جوالاً سعودياً من 10 أرقام: 05XXXXXXXX.';
   return errors;
 }
 
