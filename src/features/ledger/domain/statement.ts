@@ -69,3 +69,15 @@ export function buildStatement<T extends StatementInput>(
 export function accountBalance(entries: readonly StatementInput[]): number {
   return entries.reduce((sum, e) => (e.deleted ? sum : sum + e.signed), 0);
 }
+
+/** The whole history: first entry (or today) through the later of today and the last entry. */
+export function fullRange(entries: readonly StatementInput[], today: string): Range {
+  let from = today;
+  let to = today;
+  for (const e of entries) {
+    if (e.deleted) continue;
+    if (e.date < from) from = e.date;
+    if (e.date > to) to = e.date;
+  }
+  return { from, to };
+}

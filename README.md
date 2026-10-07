@@ -9,10 +9,27 @@
 
 ```bash
 npm ci
-npm run dev          # يحتاج ملف .env (انظر .env.example)
 npm run lint && npm run typecheck && npm test
-npm run test:rules   # يحتاج Java 21 (محاكي Firestore)
+npm run test:rules   # يحتاج Java 21 (محاكي Firestore): القواعد + دوال البيانات الفعلية للتطبيق
 ```
+
+تشغيل محلي كامل على المحاكيات (بلا مشروع حقيقي):
+
+```bash
+npx firebase emulators:start --only firestore,auth --project demo-supplier-ledger
+# في نافذة أخرى:
+export FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099
+node scripts/bootstrap/owner.ts --email owner@example.com --name "المالك"
+node scripts/migrate/migrate.ts --db path/to/backup.db
+# ملف .env.local: قيم VITE_FIREBASE_* أي قيم وهمية + VITE_FIREBASE_PROJECT_ID=demo-supplier-ledger + VITE_USE_EMULATORS=true
+npm run dev
+```
+
+### هيكل الواجهة
+
+- `src/core` التهيئة والجلسة والتوجيه · `src/shared` أدوات وعناصر مشتركة (التقويم، الورقة السفلية، رمز الريال).
+- `src/features/<الميزة>/{domain,data,ui}`: المنطق النقي (مختبر) ← الوصول للبيانات (مختبر على المحاكي) ← الشاشات.
+- الصفحات: الدخول، الحسابات، كشف الحساب (فترة + رصيد افتتاحي)، إضافة/تعديل عملية، المستخدمون، الإعدادات، سجل التعديلات، صفحة التوقيع العامة `#/s/<رمز>`، طباعة السند وكشف الحساب (A4 / حفظ PDF).
 
 ## الإعداد لأول مرة (خطوات المالك)
 

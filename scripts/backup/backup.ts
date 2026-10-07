@@ -60,6 +60,7 @@ runMain(async () => {
 
   const snapshot: Snapshot = { version: 1, takenAt: Date.now(), docs: {} };
   let images = 0;
+  let imageBytes = 0;
   for (const name of COLLECTIONS) {
     for (const d of (await db.collection(name).get()).docs)
       snapshot.docs[d.ref.path] = encode(d.data());
@@ -73,6 +74,7 @@ runMain(async () => {
         mime: string;
         createdAt: Timestamp;
       };
+      imageBytes += data.length;
       snapshot.docs[d.ref.path] = encode({ ...rest, file: `/attachments/${acc.id}/${d.id}` });
       if (rest.createdAt.toMillis() > since) {
         const ext = rest.mime === 'image/webp' ? 'webp' : 'jpg';
@@ -83,10 +85,13 @@ runMain(async () => {
   }
 
   const day = new Date(snapshot.takenAt).toISOString().slice(0, 10);
-  await upload(token, `/backups/${day}/data.json`, JSON.stringify(snapshot));
+  const json = JSON.stringify(snapshot);
+  await upload(token, `/backups/${day}/data.json`, json);
   const docs = Object.keys(snapshot.docs).length;
+  // Rough stored size for the owner's storage bar (Spark allows 1 GiB).
+  const bytes = Buffer.byteLength(json) + imageBytes;
   await db
     .doc('meta/backup')
-    .set({ lastBackupAt: Timestamp.fromMillis(snapshot.takenAt), docs, images });
+    .set({ lastBackupAt: Timestamp.fromMillis(snapshot.takenAt), docs, images, bytes });
   console.log(`backup ok: ${docs} documents, ${images} new images`);
 });

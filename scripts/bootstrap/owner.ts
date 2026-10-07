@@ -27,6 +27,8 @@ runMain(async () => {
     throw new Error('An owner already exists. Refusing to create a second owner.');
 
   await db.runTransaction(async (tx) => {
+    // Firestore transactions require every read before any write.
+    const counter = await tx.get(db.doc('counters/vouchers'));
     tx.set(db.doc(`users/${user.uid}`), {
       name,
       email,
@@ -44,7 +46,6 @@ runMain(async () => {
         ownerUid: user.uid,
       });
     }
-    const counter = await tx.get(db.doc('counters/vouchers'));
     if (!counter.exists) tx.set(db.doc('counters/vouchers'), { next: 0 });
   });
   console.log(

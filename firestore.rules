@@ -178,7 +178,10 @@ service cloud.firestore {
             && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.accountId == accountId
             && d.signature.name == get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.signerName
             && d.signature.image == get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.signatureImage
-            && d.signature.signedAt == get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.signedAt;
+            && d.signature.signedAt == get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.signedAt
+            // …and only if the recipient signed for exactly this amount/voucher.
+            && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.amount == d.amount
+            && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.voucherNo == d.get('voucherNo', null);
         }
 
         allow read: if canAccess(accountId);
