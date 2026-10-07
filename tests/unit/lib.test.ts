@@ -5,6 +5,7 @@ import {
   formatAmount,
   normalizeDigits,
   parseAmount,
+  cleanAmountInput,
 } from '../../src/shared/lib/money';
 import {
   displayDate,
@@ -124,5 +125,24 @@ describe('signing token', () => {
     const b = generateToken();
     expect(a).toMatch(/^[A-Za-z0-9_-]{22}$/);
     expect(a).not.toBe(b);
+  });
+});
+
+describe('amount field accepts only an amount while typing', () => {
+  it('drops letters and symbols, keeps Arabic or Western digits', () => {
+    expect(cleanAmountInput('بيسشب')).toBe('');
+    expect(cleanAmountInput('12a3')).toBe('123');
+    expect(cleanAmountInput('١٢٣٤')).toBe('1234');
+    expect(cleanAmountInput('1,500')).toBe('1500');
+    expect(cleanAmountInput('-50')).toBe('50');
+  });
+  it('one decimal point, at most two decimals, at most 9 whole digits', () => {
+    expect(cleanAmountInput('12.345')).toBe('12.34');
+    expect(cleanAmountInput('١٢٫٥')).toBe('12.5');
+    expect(cleanAmountInput('1.2.3')).toBe('1.23');
+    expect(cleanAmountInput('.5')).toBe('0.5');
+    expect(cleanAmountInput('12.')).toBe('12.');
+    expect(cleanAmountInput('12345678901')).toBe('123456789');
+    expect(parseAmount(cleanAmountInput('١٬٥٠٠٫٧٥ ريال'))).toBe(150075);
   });
 });

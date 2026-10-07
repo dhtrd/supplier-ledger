@@ -12,7 +12,7 @@ import {
   preparePhoto,
   UNAPPROVED_IMAGE,
 } from '../../../shared/lib/image';
-import { formatAmount, parseAmount } from '../../../shared/lib/money';
+import { cleanAmountInput, formatAmount, parseAmount } from '../../../shared/lib/money';
 import { CalendarSheet } from '../../../shared/ui/Calendar';
 import { useBlobUrl, useDesktop } from '../../../shared/ui/hooks';
 import { Icon } from '../../../shared/ui/Icon';
@@ -388,7 +388,7 @@ export function EntryFormPage() {
                     inputMode="decimal"
                     autoComplete="off"
                     value={amountText}
-                    onChange={(e) => setAmountText(e.target.value)}
+                    onChange={(e) => setAmountText(cleanAmountInput(e.target.value))}
                     placeholder="0"
                     maxLength={18}
                     aria-invalid={!!errors.amount}
