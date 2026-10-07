@@ -89,8 +89,18 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # An older run (re-run, or one that waited for the environment) must never
+      # overwrite a newer deploy: only the commit that is main's head deploys.
+      - name: Newest main commit only
+        id: newest
+        run: |
+          head="$(git ls-remote "https://github.com/${{ github.repository }}" refs/heads/main | cut -f1)"
+          if [ "$head" = "${{ github.sha }}" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"
+          else echo "::warning::main moved on to ${head:0:7}; skipping this older deploy"; echo "ok=false" >> "$GITHUB_OUTPUT"; fi
       - uses: actions/configure-pages@v6
+        if: steps.newest.outputs.ok == 'true'
       - id: deployment
+        if: steps.newest.outputs.ok == 'true'
         uses: actions/deploy-pages@v5
 
   deploy-rules:
@@ -99,13 +109,25 @@ jobs:
     needs: [checks, rules, security]
     runs-on: ubuntu-latest
     steps:
+      # An older run (re-run, or one that waited for the environment) must never
+      # overwrite a newer deploy: only the commit that is main's head deploys.
+      - name: Newest main commit only
+        id: newest
+        run: |
+          head="$(git ls-remote "https://github.com/${{ github.repository }}" refs/heads/main | cut -f1)"
+          if [ "$head" = "${{ github.sha }}" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"
+          else echo "::warning::main moved on to ${head:0:7}; skipping this older deploy"; echo "ok=false" >> "$GITHUB_OUTPUT"; fi
       - uses: actions/checkout@v6
+        if: steps.newest.outputs.ok == 'true'
       - uses: actions/setup-node@v6
+        if: steps.newest.outputs.ok == 'true'
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+        if: steps.newest.outputs.ok == 'true'
       - name: Deploy
+        if: steps.newest.outputs.ok == 'true'
         env:
           SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           PROJECT: ${{ vars.VITE_FIREBASE_PROJECT_ID }}
