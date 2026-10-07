@@ -68,6 +68,8 @@ beforeEach(async () => {
   await seed(env);
 });
 
+const CTX = { actorName: 'entry', accountName: 'حساب accA' };
+
 const PNG =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
@@ -171,10 +173,12 @@ describe('entries', () => {
       cur,
       { amount: 120000, signed: 120000, date: '2026-09-03', details: 'معدلة', keepAttachments: [] },
       [],
+      [],
+      CTX,
     );
     const after = (await getEntry(db, ACC_A, 'inv1'))!;
     expect(after.entry.amount).toBe(120000);
-    await deleteEntry(db, 'entry', ACC_A, after);
+    await deleteEntry(db, 'entry', ACC_A, after, [], CTX);
     expect((await getEntry(db, ACC_A, 'inv1'))!.entry.deleted).toBe(true);
     const log = await listAudit(as('admin'));
     expect(log.map((l) => l.action).sort()).toEqual(['delete', 'update']);
@@ -217,10 +221,12 @@ describe('signing flow', () => {
     await syncSignedLink(staff, 'entry', signed);
     const frozen = (await getEntry(staff, ACC_A, 'pay1'))!;
     expect(frozen.entry.signature?.name).toBe('عبد المجيد');
+    // A signed voucher can no longer be changed while keeping its signature.
     await assertFails(
-      deleteEntry(staff, 'entry', ACC_A, {
-        ...frozen,
-        entry: { ...frozen.entry, signature: null },
+      updateDoc(doc(staff, `accounts/${ACC_A}/entries/pay1`), {
+        details: 'x',
+        updatedAt: serverTimestamp(),
+        updatedBy: 'entry',
       }),
     );
   });
@@ -265,6 +271,7 @@ describe('signing flow', () => {
       { amount: 1000, signed: -1000, date: cur.entry.date, details: '', keepAttachments: [] },
       [],
       [t2],
+      CTX,
     );
     await assertFails(getPublicLink(anon(), t2));
   });
@@ -390,6 +397,8 @@ describe('returns, discounts and backup requests', () => {
       ret,
       { amount: 900, signed: -900, date: ret.entry.date, details: 'مرتجع', keepAttachments: [] },
       [],
+      [],
+      CTX,
     );
     const invoice = {
       type: 'invoice',

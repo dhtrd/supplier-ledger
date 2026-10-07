@@ -76,10 +76,13 @@ export async function getBackupMeta(db: Firestore): Promise<BackupMeta> {
   };
 }
 
+export type AuditAction = 'update' | 'delete' | 'restore' | 'archive' | 'unarchive';
+const ACTIONS: AuditAction[] = ['update', 'delete', 'restore', 'archive', 'unarchive'];
+
 export interface AuditItem {
   id: string;
   actor: string;
-  action: 'update' | 'delete';
+  action: AuditAction;
   path: string;
   atMs: number;
   before: Record<string, unknown>;
@@ -92,7 +95,7 @@ export async function listAudit(db: Firestore, max = 100): Promise<AuditItem[]> 
     return {
       id: s.id,
       actor: str(d.actor),
-      action: d.action === 'delete' ? 'delete' : 'update',
+      action: ACTIONS.includes(d.action as AuditAction) ? (d.action as AuditAction) : 'update',
       path: str(d.path),
       atMs: millis(d.at),
       before: (d.before ?? {}) as Record<string, unknown>,

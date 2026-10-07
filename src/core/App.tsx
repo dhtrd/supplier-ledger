@@ -1,3 +1,5 @@
+import { NotificationsPage } from '../features/notifications/ui/NotificationsPage';
+import { TrashPage } from '../features/trash/ui/TrashPage';
 import { lazy, Suspense, type ReactNode } from 'react';
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { LoginPage } from '../features/auth/ui/LoginPage';
@@ -132,6 +134,8 @@ function SignedIn({ s }: { s: ReadySession }) {
             <Route path="/users" element={<UsersPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/audit" element={<AuditPage />} />
+            <Route path="/trash" element={<TrashPage />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

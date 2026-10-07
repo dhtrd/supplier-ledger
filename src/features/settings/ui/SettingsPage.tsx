@@ -56,7 +56,7 @@ function navItems(role: Role): NavItem[] {
       : []),
     { id: 's-quick', label: 'الدخول السريع' },
     ...(can.backupNow(role) ? [{ id: 's-snapshot', label: 'نسخة لحظية' }] : []),
-    { id: 's-account', label: 'الحساب والسجل' },
+    { id: 's-account', label: 'السجل والسلة' },
   ];
 }
 
@@ -124,6 +124,12 @@ export function SettingsPage() {
             {can.viewAudit(profile.role) && (
               <Link to="/audit" className="btn" style={{ justifyContent: 'space-between' }}>
                 سجل التعديلات والحذف
+                <span aria-hidden="true">←</span>
+              </Link>
+            )}
+            {can.restoreFromTrash(profile.role) && (
+              <Link to="/trash" className="btn" style={{ justifyContent: 'space-between' }}>
+                سلة المهملات
                 <span aria-hidden="true">←</span>
               </Link>
             )}

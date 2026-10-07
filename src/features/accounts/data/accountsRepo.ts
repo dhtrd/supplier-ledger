@@ -3,16 +3,20 @@ import {
   addDoc,
   collection,
   count,
+  deleteField,
   doc,
   getAggregateFromServer,
   getDoc,
   getDocs,
+  limit,
   onSnapshot,
+  orderBy,
   query,
   serverTimestamp,
   sum,
   updateDoc,
   where,
+  writeBatch,
   type DocumentSnapshot,
   type Firestore,
 } from 'firebase/firestore';
@@ -31,6 +35,7 @@ export function toAccount(s: DocumentSnapshot): Account {
     group: GROUPS.includes(g) ? g : 'general',
     logo: bytes(d.logo),
     deleted: bool(d.deleted),
+    archived: bool(d.archived),
   };
 }
 
@@ -47,6 +52,46 @@ export async function getAccounts(db: Firestore, ids: string[]): Promise<Account
     .filter((s) => s.exists())
     .map(toAccount)
     .filter((a) => !a.deleted);
+}
+
+/** Archive (hide from the daily list) or bring back; audited. Owner and managers. */
+export async function setArchived(
+  db: Firestore,
+  uid: string,
+  account: Pick<Account, 'id' | 'archived'>,
+  archived: boolean,
+): Promise<void> {
+  const ref = doc(db, 'accounts', account.id);
+  const audit = doc(collection(db, 'auditLog'));
+  const batch = writeBatch(db);
+  batch.set(audit, {
+    actor: uid,
+    action: archived ? 'archive' : 'unarchive',
+    path: ref.path,
+    before: { archived: account.archived },
+    at: serverTimestamp(),
+  });
+  batch.update(ref, {
+    archived,
+    archivedAt: archived ? serverTimestamp() : deleteField(),
+    archivedBy: archived ? uid : deleteField(),
+    auditId: audit.id,
+    updatedAt: serverTimestamp(),
+    updatedBy: uid,
+  });
+  await batch.commit();
+}
+
+/** Date (YYYY-MM-DD) of the latest live entry, or null for an empty account. */
+export async function lastMovement(db: Firestore, id: string): Promise<string | null> {
+  const q = query(
+    collection(db, 'accounts', id, 'entries'),
+    where('deleted', '==', false),
+    orderBy('date', 'desc'),
+    limit(1),
+  );
+  const snap = await getDocs(q);
+  return snap.empty ? null : str(snap.docs[0]?.data().date) || null;
 }
 
 export function watchAccount(

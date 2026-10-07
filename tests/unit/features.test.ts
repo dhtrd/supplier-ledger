@@ -14,10 +14,22 @@ import { statementSheet } from '../../src/features/ledger/export/statementSheet'
 import { DEFAULT_SETTINGS, validateSettings } from '../../src/features/settings/domain/types';
 import { can, validatePassword } from '../../src/features/users/domain/types';
 import { decryptText, encryptText, isEnvelope } from '../../src/shared/lib/backupCrypto';
-import { IMAGE_ACCEPT, isApprovedImage } from '../../src/shared/lib/imageFormats';
+import { IMAGE_ACCEPT, isApprovedImage, isHeicFile } from '../../src/shared/lib/imageFormats';
 import { expiredBackupFolders, rawLink } from '../../scripts/lib/dropbox';
 import { parseLedgerSheet, verifyAgainstSheet } from '../../scripts/import/excelLedger';
 import { decode } from '../../scripts/backup/snapshot';
+import {
+  archiveCandidates,
+  daysBetween,
+  needsLastMovement,
+  type ArchiveCandidateInput,
+} from '../../src/features/accounts/domain/archive';
+import {
+  describeChanges,
+  editKind,
+  isUnread,
+  visibleTo,
+} from '../../src/features/notifications/domain/notification';
 
 const entry = (p: Partial<Entry>): Entry => ({
   id: 'e',
@@ -352,23 +364,24 @@ describe('entry form context (desktop layout «ب»)', () => {
 });
 
 describe('approved attachment formats', () => {
-  it('accepts JPEG, PNG and WebP only', () => {
-    for (const type of ['image/jpeg', 'image/png', 'image/webp', 'IMAGE/JPEG'])
-      expect(isApprovedImage({ type, name: 'x' })).toBe(true);
+  it('accepts JPEG, PNG, WebP and iPhone HEIC/HEIF only', () => {
     for (const type of [
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+      'IMAGE/JPEG',
       'image/heic',
-      'image/gif',
-      'image/bmp',
-      'image/svg+xml',
-      'application/pdf',
-      'text/html',
+      'image/heif',
     ])
+      expect(isApprovedImage({ type, name: 'x' })).toBe(true);
+    for (const type of ['image/gif', 'image/bmp', 'image/svg+xml', 'application/pdf', 'text/html'])
       expect(isApprovedImage({ type, name: 'x.jpg' })).toBe(false);
   });
   it('judges a file without a MIME type by its extension', () => {
     expect(isApprovedImage({ type: '', name: 'scan.JPG' })).toBe(true);
     expect(isApprovedImage({ type: '', name: 'scan.webp' })).toBe(true);
-    expect(isApprovedImage({ type: '', name: 'scan.heic' })).toBe(false);
+    expect(isApprovedImage({ type: '', name: 'IMG_0001.HEIC' })).toBe(true);
+    expect(isApprovedImage({ type: '', name: 'scan.gif' })).toBe(false);
     expect(isApprovedImage({ type: '', name: 'evil.jpg.exe' })).toBe(false);
     expect(isApprovedImage({ type: '' })).toBe(false);
   });
@@ -376,6 +389,73 @@ describe('approved attachment formats', () => {
     expect(IMAGE_ACCEPT.split(',')).toEqual(
       expect.arrayContaining(['image/jpeg', 'image/png', 'image/webp']),
     );
-    expect(IMAGE_ACCEPT).not.toMatch(/\*|heic|gif|svg/);
+    expect(IMAGE_ACCEPT).toMatch(/image\/heic/);
+    expect(IMAGE_ACCEPT).not.toMatch(/\*|gif|svg/);
+  });
+  it('routes only HEIC/HEIF through the converter', () => {
+    expect(isHeicFile({ type: 'image/heic' })).toBe(true);
+    expect(isHeicFile({ type: 'image/heif' })).toBe(true);
+    expect(isHeicFile({ type: '', name: 'a.heic' })).toBe(true);
+    expect(isHeicFile({ type: 'image/jpeg', name: 'a.heic' })).toBe(false);
+  });
+});
+
+describe('archive suggestion (90 days, settled only)', () => {
+  const row = (p: Partial<ArchiveCandidateInput>): ArchiveCandidateInput => ({
+    id: 'a',
+    archived: false,
+    balance: 0,
+    count: 3,
+    lastDate: '2026-06-01',
+    ...p,
+  });
+  it('suggests settled accounts idle for 90+ days', () => {
+    expect(daysBetween('2026-07-09', '2026-10-07')).toBe(90);
+    expect(archiveCandidates([row({ lastDate: '2026-07-09' })], '2026-10-07')).toEqual(['a']);
+    expect(archiveCandidates([row({ lastDate: '2026-07-10' })], '2026-10-07')).toEqual([]);
+  });
+  it('never suggests a balance, an empty account or an archived one', () => {
+    expect(archiveCandidates([row({ balance: 100 })], '2026-10-07')).toEqual([]);
+    expect(archiveCandidates([row({ balance: -1 })], '2026-10-07')).toEqual([]);
+    expect(archiveCandidates([row({ count: 0, lastDate: null })], '2026-10-07')).toEqual([]);
+    expect(archiveCandidates([row({ archived: true })], '2026-10-07')).toEqual([]);
+    expect(needsLastMovement(row({ balance: 5 }))).toBe(false);
+    expect(needsLastMovement(row({}))).toBe(true);
+  });
+});
+
+describe('notifications text', () => {
+  const base = { amount: 100000, date: '2026-10-01', details: 'دفعة', attachments: 1 };
+  it('lists only what changed, before ← after', () => {
+    expect(describeChanges('payment', base, { ...base })).toEqual([]);
+    expect(describeChanges('payment', base, { ...base, amount: 110000 })).toEqual([
+      'المبلغ: 1,000 ← 1,100',
+    ]);
+    expect(
+      describeChanges('invoice', base, {
+        ...base,
+        date: '2026-10-02',
+        details: '',
+        attachments: 2,
+      }),
+    ).toEqual(['التاريخ: 2026/10/01 ← 2026/10/02', 'التفاصيل: «دفعة» ← (فارغ)', 'الصور: 1 ← 2']);
+    expect(describeChanges('note', base, { ...base, amount: 5 })).toEqual([]);
+  });
+  it('notifies for signed vouchers and invoices only; never the actor', () => {
+    expect(editKind({ type: 'payment', signature: { name: 'x', image: '', signedAtMs: 1 } })).toBe(
+      'signedEdit',
+    );
+    expect(editKind({ type: 'invoice', signature: null })).toBe('invoiceEdit');
+    expect(editKind({ type: 'payment', signature: null })).toBeNull();
+    expect(editKind({ type: 'note', signature: null })).toBeNull();
+    const n = { actor: 'a', readBy: ['b'] };
+    expect(isUnread(n, 'a')).toBe(false);
+    expect(isUnread(n, 'b')).toBe(false);
+    expect(isUnread(n, 'c')).toBe(true);
+    expect(visibleTo([n, { actor: 'c', readBy: [] }], 'a')).toHaveLength(1);
+  });
+  it('keeps long details short', () => {
+    const lines = describeChanges('invoice', base, { ...base, details: 'س'.repeat(400) });
+    expect(lines[0]!.length).toBeLessThanOrEqual(200);
   });
 });

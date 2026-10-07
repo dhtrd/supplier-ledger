@@ -46,7 +46,7 @@ export function EntrySheet({
   onEdit: () => void;
 }) {
   const e = snap.entry;
-  const { user, settings } = useReady();
+  const { user, profile, settings } = useReady();
   const toast = useToast();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -60,8 +60,11 @@ export function EntrySheet({
       const open = links
         .filter((l) => l.entryId === e.id && l.status === 'pending')
         .map((l) => l.id);
-      await deleteEntry(fb().db, user.uid, account.id, snap, open);
-      toast.info(`حُذفت العملية (${entryLabel(e)}) وسُجّل الحذف في سجل التعديلات.`);
+      await deleteEntry(fb().db, user.uid, account.id, snap, open, {
+        actorName: profile.name,
+        accountName: account.name,
+      });
+      toast.info(`نُقلت ${entryLabel(e)} إلى سلة المهملات. يمكن للمالك والإدارة استرجاعها.`);
       onClose();
     } catch (err) {
       reportError('delete-entry', err);
@@ -138,13 +141,29 @@ export function EntrySheet({
 
   if (confirmDelete)
     return (
-      <Sheet title={`حذف ${entryLabel(e)}؟`} onClose={() => setConfirmDelete(false)}>
+      <Sheet title={`نقل ${title} إلى سلة المهملات؟`} onClose={() => setConfirmDelete(false)}>
         <p style={{ margin: 0, lineHeight: 1.8 }}>
-          ستختفي من الكشف ويتغير الرصيد. تبقى نسخة في سجل التعديلات والنسخ الاحتياطي.
+          تختفي من الكشف
+          {e.type === 'note' ? (
+            ' ولا يتغيّر الرصيد'
+          ) : (
+            <>
+              {' '}
+              و{e.type === 'invoice' ? 'ينقص' : 'يزيد'} الرصيد بمقدار{' '}
+              <strong className="num">{formatAmount(e.amount)}</strong>
+            </>
+          )}
+          . يمكن للمالك والإدارة استرجاعها من «سلة المهملات»، ولا يُحذف شيء نهائياً.
         </p>
+        {e.signature && (
+          <div className="banner banner-warn" role="note">
+            السند موقّع من <strong>{e.signature.name}</strong>. يُنقل بتوقيعه، ويصل تنبيه للمالك
+            والإدارة.
+          </div>
+        )}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
           <button type="button" className="btn btn-danger" onClick={remove} disabled={busy}>
-            {busy ? 'جارٍ…' : 'نعم، احذف'}
+            {busy ? 'جارٍ…' : 'نعم، انقلها للسلة'}
           </button>
           <button type="button" className="btn" onClick={() => setConfirmDelete(false)}>
             تراجع
@@ -306,16 +325,12 @@ export function EntrySheet({
             طباعة السند
           </Link>
         )}
-        {!locked && (
-          <>
-            <button type="button" className="btn" onClick={onEdit}>
-              تعديل
-            </button>
-            <button type="button" className="btn btn-danger" onClick={() => setConfirmDelete(true)}>
-              حذف
-            </button>
-          </>
-        )}
+        <button type="button" className="btn" onClick={onEdit}>
+          تعديل
+        </button>
+        <button type="button" className="btn btn-danger" onClick={() => setConfirmDelete(true)}>
+          حذف
+        </button>
         <button
           type="button"
           className="btn btn-quiet"
@@ -327,7 +342,7 @@ export function EntrySheet({
       </div>
       {locked && (
         <p className="hint" style={{ margin: 0 }}>
-          السند الموقّع لا يُعدّل ولا يُحذف.
+          تعديل السند الموقّع يلغي توقيعه ويلزم إرسال رابط جديد، ويصل تنبيه للمالك والإدارة.
         </p>
       )}
     </Sheet>

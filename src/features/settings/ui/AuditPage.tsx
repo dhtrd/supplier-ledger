@@ -10,7 +10,15 @@ import { Icon } from '../../../shared/ui/Icon';
 import { ENTRY_LABEL, type EntryType } from '../../ledger/domain/types';
 import { listUsers } from '../../users/data/usersRepo';
 import { can } from '../../users/domain/types';
-import { listAudit, type AuditItem } from '../data/settingsRepo';
+import { listAudit, type AuditAction, type AuditItem } from '../data/settingsRepo';
+
+const ACTION_LABEL: Record<AuditAction, string> = {
+  update: 'تعديل',
+  delete: 'نقل للسلة:',
+  restore: 'استرجاع',
+  archive: 'أرشفة',
+  unarchive: 'إعادة من الأرشيف:',
+};
 
 /** Last 100 edits/deletes with the version before the change (managers only). */
 export function AuditPage() {
@@ -62,10 +70,12 @@ export function AuditPage() {
       ) : (
         items.map((it) => {
           const b = it.before;
+          const accountId = it.path.split('/')[1] ?? '';
+          const isAccount = it.path.split('/').length === 2;
           const type = (
             typeof b.type === 'string' && b.type in ENTRY_LABEL ? b.type : 'note'
           ) as EntryType;
-          const accountId = it.path.split('/')[1] ?? '';
+          const sig = b.signature as { name?: unknown } | undefined;
           return (
             <div
               key={it.id}
@@ -73,8 +83,8 @@ export function AuditPage() {
             >
               <div className="row-between">
                 <strong style={{ color: it.action === 'delete' ? 'var(--alayh)' : 'var(--ink)' }}>
-                  {it.action === 'delete' ? 'حذف' : 'تعديل'} {ENTRY_LABEL[type]}
-                  {typeof b.voucherNo === 'number' && ` #${b.voucherNo}`}
+                  {ACTION_LABEL[it.action]} {isAccount ? 'حساب' : ENTRY_LABEL[type]}
+                  {!isAccount && typeof b.voucherNo === 'number' && ` #${b.voucherNo}`}
                 </strong>
                 <span className="muted num" style={{ fontSize: 12 }}>
                   {it.atMs ? formatDateTime(it.atMs, 'short') : ''}
@@ -86,22 +96,25 @@ export function AuditPage() {
                   عرض الحساب
                 </Link>
               </div>
-              <div
-                className="num"
-                style={{
-                  fontSize: 13,
-                  marginTop: 6,
-                  padding: '6px 10px',
-                  background: 'var(--band)',
-                  borderRadius: 8,
-                }}
-              >
-                قبل التغيير: {typeof b.date === 'string' ? displayDate(b.date) : ''}
-                {typeof b.amount === 'number' &&
-                  b.amount > 0 &&
-                  ` · ${formatAmount(b.amount)} ريال`}
-                {typeof b.details === 'string' && b.details && ` · ${b.details}`}
-              </div>
+              {!isAccount && (
+                <div
+                  className="num"
+                  style={{
+                    fontSize: 13,
+                    marginTop: 6,
+                    padding: '6px 10px',
+                    background: 'var(--band)',
+                    borderRadius: 8,
+                  }}
+                >
+                  قبل التغيير: {typeof b.date === 'string' ? displayDate(b.date) : ''}
+                  {typeof b.amount === 'number' &&
+                    b.amount > 0 &&
+                    ` · ${formatAmount(b.amount)} ريال`}
+                  {typeof b.details === 'string' && b.details && ` · ${b.details}`}
+                  {sig && typeof sig.name === 'string' && ` · كان موقّعاً من ${sig.name}`}
+                </div>
+              )}
             </div>
           );
         })

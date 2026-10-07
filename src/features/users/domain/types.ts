@@ -30,6 +30,12 @@ export const can = {
   seeBalances: (r: Role) => r !== 'entry',
   /** On-demand backups (request + encrypted download). */
   backupNow: (r: Role) => r === 'owner' || r === 'admin',
+  /** Notifications tab (signed-voucher/invoice edits, trash moves and restores). */
+  viewNotifications: (r: Role) => r === 'owner' || r === 'admin',
+  /** Trash screen and restoring from it. */
+  restoreFromTrash: (r: Role) => r === 'owner' || r === 'admin',
+  /** Archive accounts and bring them back. */
+  archiveAccounts: (r: Role) => r === 'owner' || r === 'admin',
   /** Can this manager edit that user? Owner is protected; nobody edits themselves except the owner's name. */
   editUser: (actor: UserProfile, target: UserProfile) =>
     (actor.role === 'owner' || actor.role === 'admin') &&

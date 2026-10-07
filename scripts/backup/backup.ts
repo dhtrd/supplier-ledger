@@ -12,7 +12,8 @@
  *    /backups/YYYY-MM-DD/data[-hh-mm-ssص|م].json.enc, Riyadh time (key: BACKUP_ENCRYPTION_KEY).
  * 3. Deletes backup folders older than 30 days (images are never deleted —
  *    they are the only copy of the originals).
- * 4. Records meta/backup for the owner's Settings page.
+ * 4. Removes notifications older than 90 days (they stay in the backups).
+ * 5. Records meta/backup for the owner's Settings page.
  *
  * Nothing is printed except counts (the repository and its logs are public).
  * Any failure exits non-zero.
@@ -44,8 +45,11 @@ const COLLECTIONS = [
   'meta',
   'lockouts',
   'backupRequests',
+  'notifications',
 ];
 const RETENTION_DAYS = 30;
+/** Notifications are kept 90 days (approved spec); older ones are in the backups. */
+const NOTIFICATION_DAYS = 90;
 
 function backupKey(): string {
   const k = process.env.BACKUP_ENCRYPTION_KEY;
@@ -125,6 +129,19 @@ runMain(async () => {
     );
     for (const name of expired) await deletePath(token, `/backups/${name}`);
 
+    // Daily run only, after the snapshot above holds them.
+    let oldNotes = 0;
+    if (!requests.length) {
+      const cutoff = Timestamp.fromMillis(snapshot.takenAt - NOTIFICATION_DAYS * 86_400_000);
+      const old = await db.collection('notifications').where('at', '<', cutoff).limit(450).get();
+      if (!old.empty) {
+        const batch = db.batch();
+        for (const d of old.docs) batch.delete(d.ref);
+        await batch.commit();
+        oldNotes = old.size;
+      }
+    }
+
     // ---- 4. status ---------------------------------------------------------
     await db.doc('meta/backup').set({
       lastBackupAt: Timestamp.fromMillis(snapshot.takenAt),
@@ -136,7 +153,7 @@ runMain(async () => {
     });
     for (const r of requests) await r.ref.update({ status: 'done', doneAt: Timestamp.now(), file });
     console.log(
-      `backup ok: ${docs} documents, ${moved} images moved, ${expired.length} old folders removed`,
+      `backup ok: ${docs} documents, ${moved} images moved, ${expired.length} old folders removed, ${oldNotes} old notifications removed`,
     );
     if (moveError)
       throw new Error(

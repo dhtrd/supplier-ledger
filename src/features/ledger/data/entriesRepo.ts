@@ -1,7 +1,10 @@
 import {
   Bytes,
   collection,
+  collectionGroup,
+  deleteField,
   doc,
+  getDocs,
   getDoc,
   onSnapshot,
   orderBy,
@@ -19,6 +22,13 @@ import {
 import { AppError } from '../../../core/errors';
 import { int, millis, str, strList } from '../../../shared/lib/firestore';
 import type { Entry, EntryType, Signature } from '../domain/types';
+import { addNotification } from '../../notifications/data/notificationsRepo';
+import {
+  describeChanges,
+  editKind,
+  entrySummary,
+  entryTitle,
+} from '../../notifications/domain/notification';
 
 const TYPES: EntryType[] = ['invoice', 'payment', 'note'];
 
@@ -180,11 +190,45 @@ export interface EntryChanges {
   keepAttachments: string[];
 }
 
-function auditRecord(uid: string, action: 'update' | 'delete', path: string, before: object) {
+type AuditAction = 'update' | 'delete' | 'restore';
+
+function auditRecord(uid: string, action: AuditAction, path: string, before: object) {
   return { actor: uid, action, path, before, at: serverTimestamp() };
 }
 
-/** Edits an unsigned entry; the previous version goes to auditLog atomically. */
+/** Who acts and on which account — the notification text needs both names. */
+export interface ChangeContext {
+  actorName: string;
+  accountName: string;
+}
+
+/** True when saving these values would actually change the entry. */
+export function entryChanged(current: Entry, changes: EntryChanges, newFiles: number): boolean {
+  return (
+    newFiles > 0 ||
+    describeChanges(
+      current.type,
+      {
+        amount: current.amount,
+        date: current.date,
+        details: current.details,
+        attachments: current.attachments.length,
+      },
+      {
+        amount: changes.amount,
+        date: changes.date,
+        details: changes.details,
+        attachments: changes.keepAttachments.length,
+      },
+    ).length > 0
+  );
+}
+
+/**
+ * Edits an entry; the previous version goes to auditLog atomically. Editing a
+ * signed voucher removes its signature (a new link must be sent); a signed
+ * voucher or an invoice also notifies the owner and managers.
+ */
 export async function updateEntry(
   db: Firestore,
   uid: string,
@@ -192,22 +236,46 @@ export async function updateEntry(
   current: EntrySnapshot,
   changes: EntryChanges,
   newFiles: PreparedImage[],
-  revokeLinkIds: string[] = [],
+  revokeLinkIds: string[],
+  ctx: ChangeContext,
 ): Promise<void> {
-  if (current.entry.signature) throw new AppError('السند موقّع ولا يمكن تعديله.');
-  const ref = doc(entriesCol(db, accountId), current.entry.id);
+  const e = current.entry;
+  if (!entryChanged(e, changes, newFiles.length)) throw new AppError('لا تغييرات للحفظ.');
+  const ref = doc(entriesCol(db, accountId), e.id);
   const audit = doc(collection(db, 'auditLog'));
   const batch = writeBatch(db);
   batch.set(audit, auditRecord(uid, 'update', ref.path, current.raw));
   // An open signing link must never outlive the amount it was issued for.
   for (const l of revokeLinkIds) batch.update(doc(db, 'signLinks', l), { status: 'revoked' });
-  const added = writeAttachments(batch, db, uid, accountId, current.entry.id, newFiles);
+  const added = writeAttachments(batch, db, uid, accountId, e.id, newFiles);
+  const kind = editKind(e);
+  if (kind)
+    addNotification(batch, db, audit.id, {
+      kind,
+      accountId,
+      entryId: e.id,
+      accountName: ctx.accountName,
+      title: entryTitle(e),
+      changes: describeChanges(
+        e.type,
+        { amount: e.amount, date: e.date, details: e.details, attachments: e.attachments.length },
+        {
+          amount: changes.amount,
+          date: changes.date,
+          details: changes.details,
+          attachments: changes.keepAttachments.length + added.length,
+        },
+      ),
+      actor: uid,
+      actorName: ctx.actorName,
+    });
   batch.update(ref, {
     amount: changes.amount,
     signed: changes.signed,
     date: changes.date,
     details: changes.details,
     attachments: [...changes.keepAttachments, ...added],
+    ...(e.signature ? { signature: deleteField(), signLinkId: deleteField() } : {}),
     auditId: audit.id,
     updatedAt: serverTimestamp(),
     updatedBy: uid,
@@ -215,20 +283,30 @@ export async function updateEntry(
   await batch.commit();
 }
 
-/** Soft delete (kept for the audit trail and backups). */
+/** Moves an entry to the trash (soft delete, signed vouchers too) and notifies. */
 export async function deleteEntry(
   db: Firestore,
   uid: string,
   accountId: string,
   current: EntrySnapshot,
-  revokeLinkIds: string[] = [],
+  revokeLinkIds: string[],
+  ctx: ChangeContext,
 ): Promise<void> {
-  if (current.entry.signature) throw new AppError('السند موقّع ولا يمكن حذفه.');
   const ref = doc(entriesCol(db, accountId), current.entry.id);
   const audit = doc(collection(db, 'auditLog'));
   const batch = writeBatch(db);
   for (const l of revokeLinkIds) batch.update(doc(db, 'signLinks', l), { status: 'revoked' });
   batch.set(audit, auditRecord(uid, 'delete', ref.path, current.raw));
+  addNotification(batch, db, audit.id, {
+    kind: 'delete',
+    accountId,
+    entryId: current.entry.id,
+    accountName: ctx.accountName,
+    title: entryTitle(current.entry),
+    changes: entrySummary(current.entry),
+    actor: uid,
+    actorName: ctx.actorName,
+  });
   batch.update(ref, {
     deleted: true,
     deletedAt: serverTimestamp(),
@@ -237,6 +315,61 @@ export async function deleteEntry(
     updatedBy: uid,
   });
   await batch.commit();
+}
+
+/** Brings an entry back from the trash exactly as it was (owner and managers). */
+export async function restoreEntry(
+  db: Firestore,
+  uid: string,
+  accountId: string,
+  current: EntrySnapshot,
+  ctx: ChangeContext,
+): Promise<void> {
+  const ref = doc(entriesCol(db, accountId), current.entry.id);
+  const audit = doc(collection(db, 'auditLog'));
+  const batch = writeBatch(db);
+  batch.set(audit, auditRecord(uid, 'restore', ref.path, current.raw));
+  addNotification(batch, db, audit.id, {
+    kind: 'restore',
+    accountId,
+    entryId: current.entry.id,
+    accountName: ctx.accountName,
+    title: entryTitle(current.entry),
+    changes: entrySummary(current.entry),
+    actor: uid,
+    actorName: ctx.actorName,
+  });
+  batch.update(ref, {
+    deleted: false,
+    deletedAt: deleteField(),
+    auditId: audit.id,
+    updatedAt: serverTimestamp(),
+    updatedBy: uid,
+  });
+  await batch.commit();
+}
+
+export interface TrashItem {
+  accountId: string;
+  snap: EntrySnapshot;
+  deletedAtMs: number;
+  deletedBy: string;
+}
+
+/** Every entry in the trash, newest deletion first (managers only). */
+export async function listTrash(db: Firestore): Promise<TrashItem[]> {
+  const snap = await getDocs(query(collectionGroup(db, 'entries'), where('deleted', '==', true)));
+  return snap.docs
+    .map((d) => {
+      const raw = d.data();
+      return {
+        accountId: d.ref.parent.parent?.id ?? '',
+        snap: toEntry(d),
+        deletedAtMs: millis(raw.deletedAt) || millis(raw.updatedAt),
+        deletedBy: str(raw.updatedBy),
+      };
+    })
+    .sort((a, b) => b.deletedAtMs - a.deletedAtMs);
 }
 
 export async function getAttachment(

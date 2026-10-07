@@ -1,12 +1,17 @@
 import { AppError } from '../../core/errors';
-import { isApprovedImage, UNAPPROVED_IMAGE } from './imageFormats';
+import { isApprovedImage, isHeicFile, UNAPPROVED_IMAGE } from './imageFormats';
 
 export interface CompressedImage {
   data: Uint8Array;
   mime: 'image/webp' | 'image/jpeg';
 }
 
-export { IMAGE_ACCEPT, isApprovedImage, UNAPPROVED_IMAGE } from './imageFormats';
+export {
+  IMAGE_ACCEPT,
+  IMAGE_FORMATS_LABEL,
+  isApprovedImage,
+  UNAPPROVED_IMAGE,
+} from './imageFormats';
 
 const MAX_INPUT = 25 * 1024 * 1024;
 
@@ -40,11 +45,12 @@ async function decode(file: Blob): Promise<ImageBitmap | HTMLImageElement> {
  * strips EXIF metadata such as GPS location.
  */
 export async function compressImage(
-  file: Blob,
+  input: Blob,
   { maxBytes = 300 * 1024, maxSide = 1800 }: { maxBytes?: number; maxSide?: number } = {},
 ): Promise<CompressedImage> {
-  if (!isApprovedImage(file as Blob & { name?: string })) throw new AppError(UNAPPROVED_IMAGE);
-  if (file.size > MAX_INPUT) throw new AppError('الصورة أكبر من 25 ميغابايت.');
+  if (!isApprovedImage(input as Blob & { name?: string })) throw new AppError(UNAPPROVED_IMAGE);
+  if (input.size > MAX_INPUT) throw new AppError('الصورة أكبر من 25 ميغابايت.');
+  const file = await decodable(input);
   let img: ImageBitmap | HTMLImageElement;
   try {
     img = await decode(file);
@@ -90,7 +96,32 @@ export interface PreparedPhoto {
 
 /** Original + thumbnail in one step (the thumbnail stays in Firestore). */
 export async function preparePhoto(file: Blob): Promise<PreparedPhoto> {
-  const original = await compressImage(file);
-  const thumb = await compressImage(file, { maxBytes: 40 * 1024, maxSide: 480 });
+  const src = await decodable(file);
+  const original = await compressImage(src);
+  const thumb = await compressImage(src, { maxBytes: 40 * 1024, maxSide: 480 });
   return { data: original.data, thumb: thumb.data, mime: original.mime };
+}
+
+/**
+ * A blob the canvas can draw. iPhone HEIC/HEIF photos are tried natively
+ * first (Safari), then converted to JPEG in the browser with libheif
+ * (`heic-to`, ~3 MB, loaded only when such a photo is picked).
+ */
+export async function decodable(file: Blob): Promise<Blob> {
+  if (!isHeicFile(file as Blob & { name?: string })) return file;
+  try {
+    const bmp = await createImageBitmap(file);
+    bmp.close();
+    return file;
+  } catch {
+    /* not natively supported: convert below */
+  }
+  try {
+    const { heicTo } = await import('heic-to');
+    return await heicTo({ blob: file, type: 'image/jpeg', quality: 0.92 });
+  } catch {
+    throw new AppError(
+      'تعذّر تحويل صورة الآيفون (HEIC). جرّب صورة أخرى أو التقطها من الكاميرا مباشرة.',
+    );
+  }
 }
