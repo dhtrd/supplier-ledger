@@ -103,6 +103,14 @@ describe('accounts / users / settings validation', () => {
       'phone',
     );
     expect(cleanPhone('٠٥٥ ٧٤٧-٠٤٤٢')).toBe('0557470442');
+    // A number WhatsApp cannot use is refused (9 digits, landline, foreign).
+    for (const bad of ['055755359', '0676173525', '0126543210', '+201001234567'])
+      expect(
+        validateAccountForm({ name: 'مورد', phone: bad, group: 'suppliers' }),
+        bad,
+      ).toHaveProperty('phone');
+    for (const ok of ['0557553590', '557553590', '+966557553590', '966 55 755 3590'])
+      expect(validateAccountForm({ name: 'مورد', phone: ok, group: 'suppliers' }), ok).toEqual({});
   });
   it('validates users', () => {
     expect(validateUserForm({ name: 'أ', email: 'a@b.co' })).toEqual({});

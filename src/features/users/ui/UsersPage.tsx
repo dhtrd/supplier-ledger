@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { PasswordInput } from '../../../shared/ui/PasswordInput';
 import { errorMessage, reportError } from '../../../core/errors';
 import { fb, withSecondaryAuth } from '../../../core/firebase';
 import { useReady } from '../../../core/session';
@@ -339,9 +340,8 @@ function UserSheet({
       {!target && (
         <div className="field">
           <label htmlFor="u-pass">كلمة المرور الأولى</label>
-          <input
+          <PasswordInput
             id="u-pass"
-            type="password"
             autoComplete="new-password"
             className="input ltr"
             style={{ background: 'var(--white)', textAlign: 'right' }}
@@ -353,9 +353,8 @@ function UserSheet({
           <label htmlFor="u-pass2" className="sr-only">
             تأكيد كلمة المرور
           </label>
-          <input
+          <PasswordInput
             id="u-pass2"
-            type="password"
             autoComplete="new-password"
             placeholder="أعد كتابتها للتأكيد"
             className="input ltr"

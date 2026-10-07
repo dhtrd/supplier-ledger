@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { can } from '../features/users/domain/types';
+import { APP_NAME, BrandMark } from '../shared/ui/BrandMark';
 import { Icon } from '../shared/ui/Icon';
 import { useReady } from './session';
 
@@ -20,8 +21,9 @@ export function Shell() {
   return (
     <div className="shell">
       <header className="topbar no-print">
-        <NavLink to="/" className="brand">
-          دفتر الموردين
+        <NavLink to="/" className="brand" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <BrandMark size={30} />
+          {APP_NAME}
         </NavLink>
         <nav aria-label="التنقل الرئيسي">
           {tabs.map((t) => (

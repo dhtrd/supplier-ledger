@@ -81,3 +81,26 @@ export function fullRange(entries: readonly StatementInput[], today: string): Ra
   }
   return { from, to };
 }
+
+/**
+ * Balance once the form being filled is saved: a new entry adds `nextSigned`;
+ * an edit replaces the old value of entry `editingId`.
+ */
+export function balanceAfter(
+  entries: readonly StatementInput[],
+  nextSigned: number,
+  editingId: string | null = null,
+): number {
+  const old = editingId ? entries.find((e) => e.id === editingId && !e.deleted) : undefined;
+  return accountBalance(entries) - (old?.signed ?? 0) + nextSigned;
+}
+
+/** Newest first: the last `n` live entries as the statement screen shows them. */
+export function latestEntries<T extends StatementInput>(entries: readonly T[], n: number): T[] {
+  return entries
+    .filter((e) => !e.deleted)
+    .slice()
+    .sort(compareEntries)
+    .slice(-n)
+    .reverse();
+}

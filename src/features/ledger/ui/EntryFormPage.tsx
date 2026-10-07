@@ -5,13 +5,19 @@ import { fb } from '../../../core/firebase';
 import { useReady } from '../../../core/session';
 import { ErrorBox, Loading } from '../../../core/Shell';
 import { displayDate, todayRiyadh } from '../../../shared/lib/dates';
-import { preparePhoto } from '../../../shared/lib/image';
-import { formatAmount } from '../../../shared/lib/money';
+import {
+  IMAGE_ACCEPT,
+  isApprovedImage,
+  preparePhoto,
+  UNAPPROVED_IMAGE,
+} from '../../../shared/lib/image';
+import { formatAmount, parseAmount } from '../../../shared/lib/money';
 import { CalendarSheet } from '../../../shared/ui/Calendar';
-import { useBlobUrl } from '../../../shared/ui/hooks';
+import { useBlobUrl, useDesktop } from '../../../shared/ui/hooks';
 import { Icon } from '../../../shared/ui/Icon';
 import { RiyalSign } from '../../../shared/ui/RiyalSign';
 import { useToast } from '../../../shared/ui/Toast';
+import { useFormShortcuts } from '../../../shared/ui/useFormShortcuts';
 import { getAccounts } from '../../accounts/data/accountsRepo';
 import { pendingLinkIds } from '../../signing/data/signLinksRepo';
 import {
@@ -26,9 +32,11 @@ import {
   entryLabel,
   MAX_ATTACHMENTS,
   MAX_DETAILS,
+  signedAmount,
   validateEntryForm,
   type EntryType,
 } from '../domain/types';
+import { EntryContextPanel } from './EntryContextPanel';
 
 const TYPE_COLOR: Record<EntryType, string> = {
   invoice: 'var(--lah)',
@@ -72,6 +80,8 @@ export function EntryFormPage() {
   const [processing, setProcessing] = useState(false);
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
+  const amountRef = useRef<HTMLInputElement>(null);
+  const desktop = useDesktop();
 
   useEffect(() => {
     const { db } = fb();
@@ -101,32 +111,65 @@ export function EntryFormPage() {
       });
   }, [id, entryId]);
 
-  if (loadError) return <ErrorBox message={loadError} />;
-  if (!loaded) return <Loading />;
-
   const attachmentCount = keep.length + added.length;
 
   const addFiles = async (files: FileList | null) => {
     if (!files?.length) return;
     const room = MAX_ATTACHMENTS - attachmentCount;
     if (room <= 0) return toast.error(`الحد ${MAX_ATTACHMENTS} صور لكل عملية.`);
+    const all = Array.from(files);
+    const ok = all.filter((f) => isApprovedImage(f));
+    if (ok.length < all.length)
+      toast.error(`رُفض ${all.length - ok.length} ملف. ${UNAPPROVED_IMAGE}`);
+    if (!ok.length) return resetPickers();
     setProcessing(true);
     try {
       const out: PreparedImage[] = [];
-      for (const f of Array.from(files).slice(0, room)) out.push(await preparePhoto(f));
+      for (const f of ok.slice(0, room)) out.push(await preparePhoto(f));
       setAdded((a) => [...a, ...out]);
-      if (files.length > room) toast.error(`أُضيفت ${room} فقط؛ الحد ${MAX_ATTACHMENTS} صور.`);
+      if (ok.length > room) toast.error(`أُضيفت ${room} فقط؛ الحد ${MAX_ATTACHMENTS} صور.`);
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
       setProcessing(false);
-      if (cameraRef.current) cameraRef.current.value = '';
-      if (galleryRef.current) galleryRef.current.value = '';
+      resetPickers();
     }
   };
 
-  const submit = async (ev: FormEvent) => {
+  function resetPickers() {
+    if (cameraRef.current) cameraRef.current.value = '';
+    if (galleryRef.current) galleryRef.current.value = '';
+  }
+
+  const dirty =
+    !!amountText.trim() ||
+    !!details.trim() ||
+    added.length > 0 ||
+    (!!current && keep.length !== current.entry.attachments.length);
+
+  const parsed = type === 'note' ? 0 : parseAmount(amountText);
+  const nextSigned = parsed === null || parsed < 0 ? null : signedAmount(type, parsed);
+
+  /** Clears the form for the next entry; type and date stay (batch entry from one paper). */
+  const resetForNext = () => {
+    setAmountText('');
+    setDetails('');
+    setAdded([]);
+    setErrors({});
+    setBusy(false);
+    resetPickers();
+    requestAnimationFrame(() =>
+      (type === 'note' ? document.getElementById('desc') : amountRef.current)?.focus(),
+    );
+  };
+
+  const submit = (ev: FormEvent) => {
     ev.preventDefault();
+    void save(false);
+  };
+
+  const save = async (again: boolean) => {
+    if (busy || processing) return;
     const res = validateEntryForm({ type, amountText, date, details, attachmentCount });
     if (!res.ok) {
       setErrors(res.errors as Record<string, string>);
@@ -170,6 +213,7 @@ export function EntryFormPage() {
             ? `حُفظت الدفعة — سند رقم ${out.voucherNo}. اضغطها في الكشف لإرسالها للتوقيع أو طباعتها.`
             : `حُفظت ${ENTRY_LABEL[type]} وأُضيفت إلى كشف الحساب.`,
         );
+        if (again) return resetForNext();
       }
       navigate(`/a/${id}`, { replace: true });
     } catch (e) {
@@ -181,8 +225,48 @@ export function EntryFormPage() {
 
   const today = todayRiyadh();
 
+  const onKeyDown = useFormShortcuts({
+    onSave: () => void save(false),
+    onCancel: () => navigate(`/a/${id}`),
+    dirty,
+    paused: dateOpen,
+  });
+
+  const actions = (
+    <>
+      <button
+        type="submit"
+        className="btn btn-primary"
+        disabled={busy || processing}
+        style={{ minHeight: 52 }}
+      >
+        {busy ? 'جارٍ الحفظ…' : SAVE_LABEL[type]}
+        {desktop && !busy && <kbd className="kbd">Ctrl+Enter</kbd>}
+      </button>
+      {desktop && isNew && (
+        <button
+          type="button"
+          className="btn"
+          disabled={busy || processing}
+          onClick={() => void save(true)}
+          style={{ minHeight: 52 }}
+        >
+          حفظ وإضافة أخرى
+        </button>
+      )}
+      {desktop && (
+        <Link to={`/a/${id}`} className="btn btn-quiet" style={{ minHeight: 52 }}>
+          إلغاء <kbd className="kbd">Esc</kbd>
+        </Link>
+      )}
+    </>
+  );
+
+  if (loadError) return <ErrorBox message={loadError} />;
+  if (!loaded) return <Loading />;
+
   return (
-    <form onSubmit={submit} noValidate>
+    <form onSubmit={submit} onKeyDown={onKeyDown} noValidate className="entry-form">
       <div
         style={{
           display: 'flex',
@@ -191,6 +275,7 @@ export function EntryFormPage() {
           padding: '8px 8px 12px',
           borderBottom: '2px solid var(--ink)',
         }}
+        className="form-head"
       >
         <Link to={`/a/${id}`} className="icon-btn" aria-label="رجوع إلى كشف الحساب">
           <Icon name="back" />
@@ -213,207 +298,217 @@ export function EntryFormPage() {
         </div>
       </div>
 
-      <div className="pad stack" style={{ maxWidth: 640 }}>
-        {isNew && (
-          <div
-            className="seg"
-            role="group"
-            aria-label="نوع العملية"
-            style={{ ['--seg-on' as string]: TYPE_COLOR[type] }}
-          >
-            {(['invoice', 'payment', 'note'] as const).map((t) => (
-              <button key={t} type="button" aria-pressed={type === t} onClick={() => setType(t)}>
-                {ENTRY_LABEL[t]}
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="hint" style={{ fontSize: 13, marginTop: isNew ? -8 : 0 }}>
-          {HINT[type]}
-        </div>
-
-        {type !== 'note' && (
-          <div className="field">
-            <label htmlFor="amt">المبلغ</label>
+      <div className="entry-layout">
+        <div className="pad stack entry-main">
+          {isNew && (
             <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '0 14px',
-                border: `1.5px solid ${errors.amount ? 'var(--alayh)' : 'var(--rule-strong)'}`,
-                borderRadius: 12,
-                background: 'var(--sheet)',
-              }}
+              className="seg"
+              role="group"
+              aria-label="نوع العملية"
+              style={{ ['--seg-on' as string]: TYPE_COLOR[type] }}
             >
-              <input
-                id="amt"
-                inputMode="decimal"
-                autoComplete="off"
-                value={amountText}
-                onChange={(e) => setAmountText(e.target.value)}
-                placeholder="0"
-                maxLength={18}
-                aria-invalid={!!errors.amount}
-                className="num"
-                style={{
-                  flex: '1 1 auto',
-                  minWidth: 0,
-                  minHeight: 56,
-                  border: 0,
-                  background: 'transparent',
-                  fontSize: 28,
-                  fontWeight: 600,
-                  outline: 'none',
-                }}
-              />
-              <span className="muted" style={{ fontSize: 22 }}>
-                <RiyalSign size={22} />
-              </span>
-            </div>
-            {errors.amount && (
-              <div className="error-text" role="alert">
-                {errors.amount}
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="field">
-          <span className="label">التاريخ</span>
-          <button
-            type="button"
-            className="picker-btn"
-            onClick={() => setDateOpen(true)}
-            aria-label={`التاريخ ${displayDate(date)}، اضغط للتغيير`}
-          >
-            <span style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-              <span className="num" style={{ fontSize: 17, fontWeight: 600 }}>
-                {displayDate(date)}
-              </span>
-              <span className="muted" style={{ fontSize: 13 }}>
-                {date === today ? 'اليوم' : date < today ? 'تاريخ سابق' : 'تاريخ لاحق'}
-              </span>
-            </span>
-            <Icon name="calendar" size={20} />
-          </button>
-          {errors.date && <div className="error-text">{errors.date}</div>}
-        </div>
-
-        <div className="field">
-          <label htmlFor="desc">{type === 'note' ? 'نص الملاحظة' : 'التفاصيل'}</label>
-          <textarea
-            id="desc"
-            className="input"
-            rows={3}
-            maxLength={MAX_DETAILS}
-            value={details}
-            onChange={(e) => setDetails(e.target.value)}
-            placeholder={type === 'invoice' ? 'مثال: فاتورة رقم 0379' : ''}
-            aria-invalid={!!errors.details}
-          />
-          <div className="row-between">
-            {errors.details ? <div className="error-text">{errors.details}</div> : <span />}
-            <span className="hint num">
-              {details.length}/{MAX_DETAILS}
-            </span>
-          </div>
-        </div>
-
-        <div className="field">
-          <span className="label">
-            المرفقات ({attachmentCount}/{MAX_ATTACHMENTS})
-          </span>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button
-              type="button"
-              className="btn"
-              style={dashed}
-              onClick={() => cameraRef.current?.click()}
-              disabled={processing || attachmentCount >= MAX_ATTACHMENTS}
-            >
-              <Icon name="camera" />
-              الكاميرا
-            </button>
-            <button
-              type="button"
-              className="btn"
-              style={dashed}
-              onClick={() => galleryRef.current?.click()}
-              disabled={processing || attachmentCount >= MAX_ATTACHMENTS}
-            >
-              <Icon name="image" />
-              من المعرض
-            </button>
-          </div>
-          <input
-            ref={cameraRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            hidden
-            onChange={(e) => void addFiles(e.target.files)}
-          />
-          <input
-            ref={galleryRef}
-            type="file"
-            accept="image/*"
-            multiple
-            hidden
-            onChange={(e) => void addFiles(e.target.files)}
-          />
-          <div className="hint">
-            {processing ? 'جارٍ ضغط الصورة…' : 'تُضغط الصورة تلقائياً قبل الرفع (حتى 300 KB).'}
-          </div>
-          {errors.attachments && <div className="error-text">{errors.attachments}</div>}
-          {(keep.length > 0 || added.length > 0) && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {keep.map((aid, i) => (
-                <span
-                  key={aid}
-                  className="chip"
-                  style={{
-                    background: 'var(--fill)',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    padding: '4px 4px 4px 10px',
-                  }}
-                >
-                  صورة محفوظة {i + 1}
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    style={{ width: 28, height: 28 }}
-                    aria-label={`إزالة الصورة المحفوظة ${i + 1}`}
-                    onClick={() => setKeep((k) => k.filter((x) => x !== aid))}
-                  >
-                    <Icon name="x" size={16} />
-                  </button>
-                </span>
-              ))}
-              {added.map((img, i) => (
-                <Thumb
-                  key={i}
-                  img={img}
-                  onRemove={() => setAdded((a) => a.filter((_, j) => j !== i))}
-                />
+              {(['invoice', 'payment', 'note'] as const).map((t) => (
+                <button key={t} type="button" aria-pressed={type === t} onClick={() => setType(t)}>
+                  {ENTRY_LABEL[t]}
+                </button>
               ))}
             </div>
           )}
+          <div className="hint" style={{ fontSize: 13, marginTop: isNew ? -8 : 0 }}>
+            {HINT[type]}
+          </div>
+
+          <div className="amt-date">
+            {type !== 'note' && (
+              <div className="field">
+                <label htmlFor="amt">المبلغ</label>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '0 14px',
+                    border: `1.5px solid ${errors.amount ? 'var(--alayh)' : 'var(--rule-strong)'}`,
+                    borderRadius: 12,
+                    background: 'var(--sheet)',
+                  }}
+                >
+                  <input
+                    ref={amountRef}
+                    id="amt"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    value={amountText}
+                    onChange={(e) => setAmountText(e.target.value)}
+                    placeholder="0"
+                    maxLength={18}
+                    aria-invalid={!!errors.amount}
+                    className="num"
+                    style={{
+                      flex: '1 1 auto',
+                      minWidth: 0,
+                      minHeight: 56,
+                      border: 0,
+                      background: 'transparent',
+                      fontSize: 28,
+                      fontWeight: 600,
+                      outline: 'none',
+                    }}
+                  />
+                  <span className="muted" style={{ fontSize: 22 }}>
+                    <RiyalSign size={22} />
+                  </span>
+                </div>
+                {errors.amount && (
+                  <div className="error-text" role="alert">
+                    {errors.amount}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="field">
+              <span className="label">التاريخ</span>
+              <button
+                type="button"
+                className="picker-btn"
+                onClick={() => setDateOpen(true)}
+                aria-label={`التاريخ ${displayDate(date)}، اضغط للتغيير`}
+              >
+                <span style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+                  <span className="num" style={{ fontSize: 17, fontWeight: 600 }}>
+                    {displayDate(date)}
+                  </span>
+                  <span className="muted" style={{ fontSize: 13 }}>
+                    {date === today ? 'اليوم' : date < today ? 'تاريخ سابق' : 'تاريخ لاحق'}
+                  </span>
+                </span>
+                <Icon name="calendar" size={20} />
+              </button>
+              {errors.date && <div className="error-text">{errors.date}</div>}
+            </div>
+          </div>
+
+          <div className="field">
+            <label htmlFor="desc">{type === 'note' ? 'نص الملاحظة' : 'التفاصيل'}</label>
+            <textarea
+              id="desc"
+              className="input"
+              rows={3}
+              maxLength={MAX_DETAILS}
+              value={details}
+              onChange={(e) => setDetails(e.target.value)}
+              placeholder={type === 'invoice' ? 'مثال: فاتورة رقم 0379' : ''}
+              aria-invalid={!!errors.details}
+            />
+            <div className="row-between">
+              {errors.details ? <div className="error-text">{errors.details}</div> : <span />}
+              <span className="hint num">
+                {details.length}/{MAX_DETAILS}
+              </span>
+            </div>
+          </div>
+
+          <div className="field">
+            <span className="label">
+              المرفقات ({attachmentCount}/{MAX_ATTACHMENTS})
+            </span>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                type="button"
+                className="btn"
+                style={dashed}
+                onClick={() => cameraRef.current?.click()}
+                disabled={processing || attachmentCount >= MAX_ATTACHMENTS}
+              >
+                <Icon name="camera" />
+                الكاميرا
+              </button>
+              <button
+                type="button"
+                className="btn"
+                style={dashed}
+                onClick={() => galleryRef.current?.click()}
+                disabled={processing || attachmentCount >= MAX_ATTACHMENTS}
+              >
+                <Icon name="image" />
+                من المعرض
+              </button>
+            </div>
+            <input
+              ref={cameraRef}
+              type="file"
+              accept={IMAGE_ACCEPT}
+              capture="environment"
+              hidden
+              onChange={(e) => void addFiles(e.target.files)}
+            />
+            <input
+              ref={galleryRef}
+              type="file"
+              accept={IMAGE_ACCEPT}
+              multiple
+              hidden
+              onChange={(e) => void addFiles(e.target.files)}
+            />
+            <div className="hint">
+              {processing
+                ? 'جارٍ ضغط الصورة…'
+                : 'الصيغ المسموحة: JPG أو PNG أو WebP. تُضغط الصورة تلقائياً قبل الرفع (حتى 300 KB).'}
+            </div>
+            {errors.attachments && <div className="error-text">{errors.attachments}</div>}
+            {(keep.length > 0 || added.length > 0) && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {keep.map((aid, i) => (
+                  <span
+                    key={aid}
+                    className="chip"
+                    style={{
+                      background: 'var(--fill)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '4px 4px 4px 10px',
+                    }}
+                  >
+                    صورة محفوظة {i + 1}
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      style={{ width: 28, height: 28 }}
+                      aria-label={`إزالة الصورة المحفوظة ${i + 1}`}
+                      onClick={() => setKeep((k) => k.filter((x) => x !== aid))}
+                    >
+                      <Icon name="x" size={16} />
+                    </button>
+                  </span>
+                ))}
+                {added.map((img, i) => (
+                  <Thumb
+                    key={i}
+                    img={img}
+                    onRemove={() => setAdded((a) => a.filter((_, j) => j !== i))}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+          {desktop && <div className="desk-actions">{actions}</div>}
         </div>
+        {desktop && (
+          <EntryContextPanel
+            accountId={id}
+            nextSigned={nextSigned}
+            editingId={current?.entry.id ?? null}
+          />
+        )}
       </div>
 
-      <div className="bottom-actions">
-        <button
-          type="submit"
-          className="btn btn-primary btn-block"
-          disabled={busy || processing}
-          style={{ maxWidth: 640, minHeight: 52 }}
-        >
-          {busy ? 'جارٍ الحفظ…' : SAVE_LABEL[type]}
-        </button>
-      </div>
+      {!desktop && (
+        <div className="bottom-actions">
+          <div className="mobile-actions">{actions}</div>
+        </div>
+      )}
 
       {dateOpen && (
         <CalendarSheet

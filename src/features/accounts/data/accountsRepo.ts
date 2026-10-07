@@ -17,7 +17,7 @@ import {
   type Firestore,
 } from 'firebase/firestore';
 import { bool, bytes, str } from '../../../shared/lib/firestore';
-import { cleanPhone, type Account, type AccountForm, type AccountGroup } from '../domain/types';
+import { storedPhone, type Account, type AccountForm, type AccountGroup } from '../domain/types';
 
 const GROUPS: AccountGroup[] = ['suppliers', 'customers', 'general'];
 
@@ -74,7 +74,7 @@ export async function accountTotals(db: Firestore, id: string): Promise<AccountT
 function payload(form: AccountForm, logo: Uint8Array | null) {
   return {
     name: form.name.trim(),
-    phone: cleanPhone(form.phone),
+    phone: storedPhone(form.phone),
     group: form.group,
     logo: logo ? Bytes.fromUint8Array(logo) : null,
   };

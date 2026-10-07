@@ -15,6 +15,12 @@ export function toWhatsAppNumber(raw: string): string | null {
   return `966${local}`;
 }
 
+/** Stored form of a Saudi mobile: 05XXXXXXXX, or null when it is not one. */
+export function toLocalMobile(raw: string): string | null {
+  const n = toWhatsAppNumber(raw);
+  return n ? `0${n.slice(3)}` : null;
+}
+
 /** wa.me link with a prefilled message (the user still taps "send"). */
 export function whatsAppLink(phone: string, message: string): string | null {
   const n = toWhatsAppNumber(phone);

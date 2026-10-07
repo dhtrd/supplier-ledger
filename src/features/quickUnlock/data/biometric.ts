@@ -116,7 +116,7 @@ export async function enableBiometric(
   const salt = crypto.getRandomValues(new Uint8Array(32));
   const cred = (await navigator.credentials.create({
     publicKey: {
-      rp: { name: 'دفتر حسابات الموردين' },
+      rp: { name: 'دفتر الموردين' },
       user: {
         id: new TextEncoder().encode(user.uid).slice(0, 64),
         name: user.email,

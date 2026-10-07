@@ -3,8 +3,20 @@
  * rules, so a rules/client mismatch fails CI instead of failing in production.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { assertFails, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, getDocs, collection, type Firestore } from 'firebase/firestore';
+import {
+  assertFails,
+  assertSucceeds,
+  type RulesTestEnvironment,
+} from '@firebase/rules-unit-testing';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  serverTimestamp,
+  updateDoc,
+  type Firestore,
+} from 'firebase/firestore';
 import { ACC_A, ACC_B, createEnv, seed } from './setup';
 import {
   accountTotals,
@@ -82,6 +94,16 @@ describe('accounts', () => {
     await assertFails(
       createAccount(as('entry'), 'entry', { name: 'x', phone: '', group: 'general' }, null),
     );
+  });
+
+  it('a phone WhatsApp cannot use is refused by the rules too', async () => {
+    const db = as('owner');
+    const ref = doc(db, 'accounts', ACC_A);
+    const base = { updatedAt: serverTimestamp(), updatedBy: 'owner' };
+    for (const bad of ['055755359', '0676173525', '+966557553590', '05575535901'])
+      await assertFails(updateDoc(ref, { ...base, phone: bad }));
+    await assertSucceeds(updateDoc(ref, { ...base, phone: '0557553590' }));
+    await assertSucceeds(updateDoc(ref, { ...base, phone: '' }));
   });
 
   it('computes balance and count server-side, ignoring deleted entries', async () => {

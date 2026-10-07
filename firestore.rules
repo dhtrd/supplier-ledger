@@ -311,7 +311,7 @@ service cloud.firestore {
         return d.keys().hasOnly(['name', 'phone', 'group', 'logo', 'deleted',
                                  'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'legacyId'])
           && shortText(d.name, 120) && d.name.size() > 0
-          && shortText(d.phone, 20)
+          && d.phone is string && (d.phone == '' || d.phone.matches('^05[0-9]{8}$'))
           && d.group in ['suppliers', 'customers', 'general']
           && (!('logo' in d) || d.logo == null || (d.logo is bytes && d.logo.size() <= 81920))
           && d.deleted is bool;

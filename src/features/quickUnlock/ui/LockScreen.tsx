@@ -3,6 +3,7 @@ import { errorMessage, reportError } from '../../../core/errors';
 import { fb } from '../../../core/firebase';
 import { logout, type SessionState } from '../../../core/session';
 import { clock12, longDay } from '../../../shared/lib/dates';
+import { APP_NAME, BrandMark } from '../../../shared/ui/BrandMark';
 import { useDesktop, useNow } from '../../../shared/ui/hooks';
 import { getFailures } from '../../auth/data/lockoutRepo';
 import { MAX_FAILED_ATTEMPTS, remainingAttempts } from '../../auth/domain/lockout';
@@ -153,7 +154,10 @@ export function LockScreen({ session }: { session: Locked }) {
     return (
       <main className="lock-wide" aria-label="البرنامج مقفل">
         <aside className="lock-side">
-          <div className="lock-brand">دفتر حسابات الموردين</div>
+          <div className="lock-brand" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <BrandMark size={36} />
+            {APP_NAME}
+          </div>
           <Clock big />
         </aside>
         <section className="lock-main">
