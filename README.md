@@ -51,6 +51,7 @@ npm run dev
   ```
   الصق الناتج في السرّ **واحفظ نسخة منه خارج GitHub** (مدير كلمات المرور). بدونه لا تُفتح النسخ الاحتياطية المشفّرة أبداً.
 - **Settings ← Pages** ← Source: **GitHub Actions**.
+- **Google Cloud ← IAM**: أضف لحساب الخدمة `firebase-adminsdk-…` الأدوار: Service Usage Consumer وFirebase Rules Admin وCloud Datastore Index Admin (بدونها يفشل نشر القواعد بخطأ 403).
 - **Settings ← Branches** ← قاعدة لـ `main`: Require a pull request + Require status checks (`Lint · types · unit tests · build`, `Firestore security-rules tests (emulator)`, `Security scan (dependencies + secrets)`, `analyze`).
 
 ### 3) Dropbox (النسخ الاحتياطي)
