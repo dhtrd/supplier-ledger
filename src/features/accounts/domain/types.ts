@@ -1,3 +1,4 @@
+import type { RunningTotals } from './totals';
 import { cleanText } from '../../../shared/lib/text';
 import { normalizeDigits } from '../../../shared/lib/money';
 import { toLocalMobile } from '../../../shared/lib/phone';
@@ -15,6 +16,8 @@ export interface Account {
   deleted: boolean;
   /** Hidden from the daily list (owner decision 2026-10-07); data stays. */
   archived: boolean;
+  /** Running totals kept on the account; null until the backfill has run. */
+  totals: RunningTotals | null;
 }
 
 export const GROUP_LABEL: Record<AccountGroup, string> = {

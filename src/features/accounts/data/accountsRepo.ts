@@ -13,6 +13,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   sum,
   updateDoc,
@@ -21,7 +22,11 @@ import {
   type DocumentSnapshot,
   type Firestore,
 } from 'firebase/firestore';
+import { AppError } from '../../../core/errors';
 import { bool, bytes, str } from '../../../shared/lib/firestore';
+import { balanceSide, formatAmount, SIDE_LABEL } from '../../../shared/lib/money';
+import { addNotification } from '../../notifications/data/notificationsRepo';
+import { readTotals, ZERO_TOTALS } from '../domain/totals';
 import { storedPhone, type Account, type AccountForm, type AccountGroup } from '../domain/types';
 
 const GROUPS: AccountGroup[] = ['suppliers', 'customers', 'general'];
@@ -37,13 +42,32 @@ export function toAccount(s: DocumentSnapshot): Account {
     logo: bytes(d.logo),
     deleted: bool(d.deleted),
     archived: bool(d.archived),
+    totals: readTotals(d),
   };
 }
 
-/** Managers only (rules: list is manager-only). */
+/** Managers only (rules: list is manager-only). Live accounts. */
 export async function listAccounts(db: Firestore): Promise<Account[]> {
+  return (await listAllAccounts(db)).filter((a) => !a.deleted);
+}
+
+/** Managers only: every account including those in the trash. */
+export async function listAllAccounts(db: Firestore): Promise<Account[]> {
   const snap = await getDocs(collection(db, 'accounts'));
-  return snap.docs.map(toAccount).filter((a) => !a.deleted);
+  return snap.docs.map(toAccount);
+}
+
+/**
+ * Live list of every account (managers). With the device cache, reopening the
+ * list re-reads only accounts that changed; their running totals replace the
+ * per-account sums the list used to compute.
+ */
+export function watchAllAccounts(
+  db: Firestore,
+  next: (rows: Account[]) => void,
+  fail: (e: unknown) => void,
+): () => void {
+  return onSnapshot(collection(db, 'accounts'), (s) => next(s.docs.map(toAccount)), fail);
 }
 
 /** Data-entry users read their assigned accounts one by one (they cannot list). */
@@ -135,6 +159,7 @@ export async function createAccount(
   const ref = await addDoc(collection(db, 'accounts'), {
     ...payload(form, logo),
     deleted: false,
+    ...ZERO_TOTALS,
     createdAt: serverTimestamp(),
     createdBy: uid,
   });
@@ -152,5 +177,58 @@ export async function updateAccount(
     ...payload(form, logo),
     updatedAt: serverTimestamp(),
     updatedBy: uid,
+  });
+}
+
+/**
+ * Moves an account to the trash or brings it back (owner and managers):
+ * audited with the account as the server has it, and notified. Its entries
+ * are untouched and come back with it.
+ */
+export async function setAccountDeleted(
+  db: Firestore,
+  uid: string,
+  account: Pick<Account, 'id' | 'name'>,
+  deleted: boolean,
+  actorName: string,
+): Promise<void> {
+  const ref = doc(db, 'accounts', account.id);
+  const audit = doc(collection(db, 'auditLog'));
+  await runTransaction(db, async (tx) => {
+    const cur = await tx.get(ref);
+    if (!cur.exists()) throw new AppError('الحساب غير موجود.');
+    const before = cur.data();
+    if (bool(before.deleted) === deleted)
+      throw new AppError(deleted ? 'الحساب في السلة أصلاً.' : 'الحساب ليس في السلة.');
+    const t = readTotals(before);
+    tx.set(audit, {
+      actor: uid,
+      action: deleted ? 'delete' : 'restore',
+      path: ref.path,
+      before,
+      at: serverTimestamp(),
+    });
+    addNotification(tx, db, audit.id, {
+      kind: deleted ? 'accountDelete' : 'accountRestore',
+      accountId: account.id,
+      entryId: '',
+      accountName: str(before.name),
+      title: 'حساب',
+      changes: t
+        ? [
+            `الرصيد: ${formatAmount(Math.abs(t.balance))} ${SIDE_LABEL[balanceSide(t.balance)]}`,
+            `العمليات: ${t.entryCount}`,
+          ]
+        : [],
+      actor: uid,
+      actorName,
+    });
+    tx.update(ref, {
+      deleted,
+      deletedAt: deleted ? serverTimestamp() : deleteField(),
+      auditId: audit.id,
+      updatedAt: serverTimestamp(),
+      updatedBy: uid,
+    });
   });
 }

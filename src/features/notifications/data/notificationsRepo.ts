@@ -10,12 +10,21 @@ import {
   writeBatch,
   type DocumentSnapshot,
   type Firestore,
+  type DocumentReference,
+  type Transaction,
   type WriteBatch,
 } from 'firebase/firestore';
 import { millis, str, strList } from '../../../shared/lib/firestore';
 import type { AppNotification, NotificationKind } from '../domain/notification';
 
-const KINDS: NotificationKind[] = ['signedEdit', 'invoiceEdit', 'delete', 'restore'];
+const KINDS: NotificationKind[] = [
+  'signedEdit',
+  'invoiceEdit',
+  'delete',
+  'restore',
+  'accountDelete',
+  'accountRestore',
+];
 export const NOTIFICATIONS_SHOWN = 100;
 
 export interface NewNotification {
@@ -31,12 +40,12 @@ export interface NewNotification {
 
 /** Adds the notification to the batch that makes the change (id = audit id). */
 export function addNotification(
-  batch: WriteBatch,
+  batch: Pick<WriteBatch, 'set'> | Pick<Transaction, 'set'>,
   db: Firestore,
   auditId: string,
   n: NewNotification,
 ): void {
-  batch.set(doc(db, 'notifications', auditId), {
+  (batch.set as (r: DocumentReference, d: object) => void)(doc(db, 'notifications', auditId), {
     ...n,
     accountName: n.accountName.slice(0, 120),
     title: n.title.slice(0, 120),

@@ -38,7 +38,11 @@ export function NotificationsPage() {
     if (isUnread(n, user.uid)) await read([n.id]);
     // A deleted entry is no longer in the statement: it lives in the trash.
     navigate(
-      n.kind === 'delete' ? '/trash' : `/a/${n.accountId}?e=${encodeURIComponent(n.entryId)}`,
+      n.kind === 'delete' || n.kind === 'accountDelete'
+        ? '/trash'
+        : n.kind === 'accountRestore'
+          ? `/a/${n.accountId}`
+          : `/a/${n.accountId}?e=${encodeURIComponent(n.entryId)}`,
     );
   };
 

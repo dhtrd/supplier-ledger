@@ -4,6 +4,7 @@ import { fb } from '../../../core/firebase';
 import { watchAccount } from '../../accounts/data/accountsRepo';
 import type { Account } from '../../accounts/domain/types';
 import { syncSignedLink, watchOpenLinks, type SignLink } from '../../signing/data/signLinksRepo';
+import { sharedWatch } from '../../../shared/lib/sharedWatch';
 import { watchEntries, type EntrySnapshot } from '../data/entriesRepo';
 
 export interface LedgerState {
@@ -38,10 +39,27 @@ export function useLedger(accountId: string, uid: string): LedgerState {
           : errorMessage(e),
       );
     };
+    // Shared + kept alive a few minutes: moving between the statement, the
+    // entry form and prints does not start new queries (fewer reads).
     const stops = [
-      watchAccount(db, accountId, setAccount, fail('account')),
-      watchEntries(db, accountId, setEntries, fail('entries')),
-      watchOpenLinks(db, accountId, setLinks, fail('links')),
+      sharedWatch<Account | null>(
+        `account:${accountId}`,
+        (n, f) => watchAccount(db, accountId, n, f),
+        setAccount,
+        fail('account'),
+      ),
+      sharedWatch<EntrySnapshot[]>(
+        `entries:${accountId}`,
+        (n, f) => watchEntries(db, accountId, n, f),
+        setEntries,
+        fail('entries'),
+      ),
+      sharedWatch<SignLink[]>(
+        `links:${accountId}`,
+        (n, f) => watchOpenLinks(db, accountId, n, f),
+        setLinks,
+        fail('links'),
+      ),
     ];
     return () => stops.forEach((s) => s());
   }, [accountId]);

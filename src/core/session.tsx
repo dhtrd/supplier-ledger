@@ -10,7 +10,7 @@ import { unlockAfterLogin, watchScreenLock } from '../features/quickUnlock/data/
 import { deviceId } from '../features/quickUnlock/data/device';
 import type { ScreenLock } from '../features/quickUnlock/domain/presence';
 import { errorMessage, reportError } from './errors';
-import { fb } from './firebase';
+import { fb, wipeLocalData } from './firebase';
 
 interface SignedInData {
   user: User;
@@ -50,13 +50,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     };
 
     let generation = 0;
+    let hadUser = false;
     const stopAuth = onAuthStateChanged(auth, async (user) => {
       stopInner();
       const gen = ++generation;
       if (!user) {
+        // Signed out elsewhere (another tab, password change): wipe the device
+        // cache here too, exactly like the «تسجيل الخروج» button.
+        if (hadUser) return void logout();
         setState({ status: 'signedOut' });
         return;
       }
+      hadUser = true;
       setState({ status: 'loading' });
       // 5 failed attempts lock the account (enforced by the rules as well).
       try {
@@ -155,6 +160,17 @@ export function useReady(): ReadySession {
   return s;
 }
 
+/**
+ * Signs out and wipes the cached ledger data from this browser, then reloads
+ * on the login page (a closed Firestore cannot be reused).
+ */
 export async function logout(): Promise<void> {
-  await signOut(fb().auth);
+  try {
+    await signOut(fb().auth);
+  } finally {
+    await wipeLocalData();
+    // A hash-only change does not reload the page: set it, then reload.
+    window.history.replaceState(null, '', `${window.location.pathname}#/login`);
+    window.location.reload();
+  }
 }

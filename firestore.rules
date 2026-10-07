@@ -55,7 +55,8 @@ service cloud.firestore {
     // readable so the app knows to hide it instead of showing an error.
     function isEntryFor(accountId) {
       return isEntryAssigned(accountId)
-        && get(/databases/$(database)/documents/accounts/$(accountId)).data.get('archived', false) == false;
+        && get(/databases/$(database)/documents/accounts/$(accountId)).data.get('archived', false) == false
+        && get(/databases/$(database)/documents/accounts/$(accountId)).data.get('deleted', false) == false;
     }
     function canAccess(accountId) { return isManager() || isEntryFor(accountId); }
     function settings() { return get(/databases/$(database)/documents/settings/app).data; }
@@ -340,7 +341,8 @@ service cloud.firestore {
         && request.resource.data.action in ['update', 'delete', 'restore', 'archive', 'unarchive']
         && request.resource.data.path is string
         && request.resource.data.path.matches('^accounts/[A-Za-z0-9_-]{1,64}(/entries/[A-Za-z0-9_-]{1,64})?$')
-        && (request.resource.data.action in ['archive', 'unarchive']) == (seg().size() == 2)
+        && (request.resource.data.action in ['archive', 'unarchive'] ? seg().size() == 2
+            : request.resource.data.action == 'update' ? seg().size() == 4 : true)
         && request.resource.data.before is map
         && getAfter(target()).data.get('auditId', '') == id
         && beforeIsReal();
@@ -360,7 +362,7 @@ service cloud.firestore {
       function validNotification(d) {
         return d.keys().hasOnly(['kind', 'accountId', 'entryId', 'accountName', 'title', 'changes',
                                  'actor', 'actorName', 'at', 'readBy'])
-          && d.kind in ['signedEdit', 'invoiceEdit', 'delete', 'restore']
+          && d.kind in ['signedEdit', 'invoiceEdit', 'delete', 'restore', 'accountDelete', 'accountRestore']
           && d.accountId is string && d.accountId.size() <= 64
           && d.entryId is string && d.entryId.size() <= 64
           && shortText(d.accountName, 120)
@@ -373,18 +375,26 @@ service cloud.firestore {
       }
       allow read: if isManager();
       // (Role checks happen on the entry write this notification belongs to.)
+      // Kinds on an account itself (entryId == ''): accountDelete / accountRestore.
+      function onAccount(d) { return d.kind in ['accountDelete', 'accountRestore']; }
+      function acctP(d) { return /databases/$(database)/documents/accounts/$(d.accountId); }
+      function entryP(d) { return /databases/$(database)/documents/accounts/$(d.accountId)/entries/$(d.entryId); }
       allow create: if validNotification(request.resource.data)
         && auditAfter().actor == request.auth.uid
-        && auditAfter().path == entryPath(request.resource.data)
-        && auditAfter().action == (request.resource.data.kind in ['signedEdit', 'invoiceEdit']
-                                   ? 'update' : request.resource.data.kind)
-        && request.resource.data.accountName
-           == get(/databases/$(database)/documents/accounts/$(request.resource.data.accountId)).data.name
-        && (request.resource.data.kind != 'signedEdit'
-            || 'signature' in get(/databases/$(database)/documents/accounts/$(request.resource.data.accountId)/entries/$(request.resource.data.entryId)).data)
-        && (request.resource.data.kind != 'invoiceEdit'
-            || get(/databases/$(database)/documents/accounts/$(request.resource.data.accountId)/entries/$(request.resource.data.entryId)).data.type == 'invoice')
-        && getAfter(/databases/$(database)/documents/accounts/$(request.resource.data.accountId)/entries/$(request.resource.data.entryId)).data.auditId == id;
+        && (onAccount(request.resource.data)
+            ? request.resource.data.entryId == ''
+              && auditAfter().path == 'accounts/' + request.resource.data.accountId
+              && auditAfter().action == (request.resource.data.kind == 'accountDelete' ? 'delete' : 'restore')
+              && getAfter(acctP(request.resource.data)).data.auditId == id
+            : auditAfter().path == entryPath(request.resource.data)
+              && auditAfter().action == (request.resource.data.kind in ['signedEdit', 'invoiceEdit']
+                                         ? 'update' : request.resource.data.kind)
+              && (request.resource.data.kind != 'signedEdit'
+                  || 'signature' in get(entryP(request.resource.data)).data)
+              && (request.resource.data.kind != 'invoiceEdit'
+                  || get(entryP(request.resource.data)).data.type == 'invoice')
+              && getAfter(entryP(request.resource.data)).data.auditId == id)
+        && request.resource.data.accountName == get(acctP(request.resource.data)).data.name;
       // Mark as read: add only yourself.
       allow update: if changed().hasOnly(['readBy'])
         && isManager()
@@ -403,7 +413,8 @@ service cloud.firestore {
     match /accounts/{accountId} {
       function validAccount(d) {
         return d.keys().hasOnly(['name', 'phone', 'group', 'logo', 'deleted',
-                                 'archived', 'archivedAt', 'archivedBy', 'auditId',
+                                 'archived', 'archivedAt', 'archivedBy', 'auditId', 'deletedAt',
+                                 'balance', 'entryCount', 'lastDate', 'totalsEntry', 'totalsAt',
                                  'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'legacyId'])
           && d.get('archived', false) is bool
           && hasText(d.name, 120)
@@ -420,9 +431,22 @@ service cloud.firestore {
         && !('archived' in request.resource.data)
         && !('auditId' in request.resource.data)
         && !('legacyId' in request.resource.data)
+        && !('deletedAt' in request.resource.data)
+        // A new account starts with zero running totals.
+        && request.resource.data.balance == 0
+        && request.resource.data.entryCount == 0
+        && request.resource.data.lastDate == ''
+        && !('totalsEntry' in request.resource.data)
+        && !('totalsAt' in request.resource.data)
         && stamped(request.resource.data);
       allow update: if isManager()
         && validAccount(request.resource.data)
+        && request.resource.data.get('balance', null) == resource.data.get('balance', null)
+        && request.resource.data.get('entryCount', null) == resource.data.get('entryCount', null)
+        && request.resource.data.get('lastDate', null) == resource.data.get('lastDate', null)
+        && request.resource.data.get('totalsEntry', null) == resource.data.get('totalsEntry', null)
+        && request.resource.data.get('totalsAt', null) == resource.data.get('totalsAt', null)
+        && request.resource.data.get('deletedAt', null) == resource.data.get('deletedAt', null)
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.createdBy == resource.data.createdBy
         && request.resource.data.deleted == resource.data.deleted
@@ -445,6 +469,41 @@ service cloud.firestore {
             : !('archivedAt' in request.resource.data) && !('archivedBy' in request.resource.data))
         && touched(request.resource.data)
         && audited('accounts/' + accountId);
+      // Move to the trash / restore (owner and managers): audited + notified.
+      // Its entries stay as they are and come back with it.
+      allow update: if isManager()
+        && changed().hasOnly(['deleted', 'deletedAt', 'auditId', 'updatedAt', 'updatedBy'])
+        && request.resource.data.deleted is bool
+        && request.resource.data.deleted != resource.data.deleted
+        && (request.resource.data.deleted
+            ? request.resource.data.deletedAt == request.time
+            : !('deletedAt' in request.resource.data))
+        && touched(request.resource.data)
+        && audited('accounts/' + accountId)
+        && notified();
+      // Running totals (balance, live entries, latest date): moved by exactly
+      // one entry change written in the same transaction. Anyone who may write
+      // that entry may move them — and only by the entry's real difference.
+      function entryAt(e) { return /databases/$(database)/documents/accounts/$(accountId)/entries/$(e); }
+      function liveBefore(e) { return exists(entryAt(e)) && get(entryAt(e)).data.deleted == false; }
+      function liveAfter(e) { return existsAfter(entryAt(e)) && getAfter(entryAt(e)).data.deleted == false; }
+      function totalsMath(d) {
+        return d.balance == resource.data.balance
+              + (liveAfter(d.totalsEntry) ? getAfter(entryAt(d.totalsEntry)).data.signed : 0)
+              - (liveBefore(d.totalsEntry) ? get(entryAt(d.totalsEntry)).data.signed : 0)
+          && d.entryCount == resource.data.entryCount
+              + (liveAfter(d.totalsEntry) ? 1 : 0) - (liveBefore(d.totalsEntry) ? 1 : 0)
+          && d.lastDate == (liveAfter(d.totalsEntry)
+                            && getAfter(entryAt(d.totalsEntry)).data.date > resource.data.lastDate
+                              ? getAfter(entryAt(d.totalsEntry)).data.date : resource.data.lastDate);
+      }
+      allow update: if changed().hasOnly(['balance', 'entryCount', 'lastDate', 'totalsEntry', 'totalsAt'])
+        && 'balance' in resource.data
+        && request.resource.data.totalsAt == request.time
+        && request.resource.data.totalsEntry is string
+        && request.resource.data.totalsEntry.matches('^[A-Za-z0-9_-]{1,64}$')
+        && totalsMath(request.resource.data)
+        && canAccess(accountId);
       allow delete: if false;
 
       // ---------- entries ----------------------------------------------------
@@ -504,6 +563,14 @@ service cloud.firestore {
             && request.resource.data.get('legacyId', null) == resource.data.get('legacyId', null);
         }
         function entryPath() { return 'accounts/' + accountId + '/entries/' + entryId; }
+        function acct() { return /databases/$(database)/documents/accounts/$(accountId); }
+        // Every create/edit/trash/restore moves the account's running totals in
+        // the same write (not required until the account is initialised).
+        function totalsMoved() {
+          return !('balance' in get(acct()).data)
+            || (getAfter(acct()).data.totalsAt == request.time
+                && getAfter(acct()).data.totalsEntry == entryId);
+        }
         function trashFlip() {
           return changed().hasOnly(['deleted', 'deletedAt', 'auditId', 'updatedAt', 'updatedBy'])
             && touched(request.resource.data)
@@ -523,7 +590,8 @@ service cloud.firestore {
           && !('auditId' in request.resource.data)
           && stamped(request.resource.data)
           && (request.resource.data.type != 'payment' || voucherAllocated(request.resource.data))
-          && (request.resource.data.type == 'payment' || !('voucherNo' in request.resource.data));
+          && (request.resource.data.type == 'payment' || !('voucherNo' in request.resource.data))
+          && totalsMoved();
 
         // Edit. Editing a signed voucher removes its signature (and link id):
         // a new link must be sent. Always audited; a signed voucher or an
@@ -543,7 +611,8 @@ service cloud.firestore {
               : request.resource.data.get('signLinkId', null) == resource.data.get('signLinkId', null))
           && touched(request.resource.data)
           && audited(entryPath())
-          && ((!('signature' in resource.data) && resource.data.type != 'invoice') || notified());
+          && ((!('signature' in resource.data) && resource.data.type != 'invoice') || notified())
+          && totalsMoved();
 
         // Move to the trash (signed vouchers too): nothing else changes, so a
         // restore brings the entry back exactly as it was. Audited + notified.
@@ -551,14 +620,16 @@ service cloud.firestore {
           && request.resource.data.deleted == true
           && request.resource.data.deletedAt == request.time
           && canAccess(accountId)
-          && trashFlip();
+          && trashFlip()
+          && totalsMoved();
 
         // Restore from the trash: owner and managers only.
         allow update: if resource.data.deleted == true
           && request.resource.data.deleted == false
           && !('deletedAt' in request.resource.data)
           && isManager()
-          && trashFlip();
+          && trashFlip()
+          && totalsMoved();
 
         // Attach the recipient's signature (copied from the signed link).
         allow update: if resource.data.type == 'payment'

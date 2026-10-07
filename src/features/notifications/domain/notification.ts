@@ -3,7 +3,8 @@ import { formatAmount } from '../../../shared/lib/money';
 import { entryLabel, type Entry } from '../../ledger/domain/types';
 
 /** notifications/{auditId} — what the owner and managers are told about. */
-export type NotificationKind = 'signedEdit' | 'invoiceEdit' | 'delete' | 'restore';
+export type NotificationKind =
+  'signedEdit' | 'invoiceEdit' | 'delete' | 'restore' | 'accountDelete' | 'accountRestore';
 
 export interface AppNotification {
   id: string;
@@ -26,6 +27,8 @@ export const KIND_LABEL: Record<NotificationKind, string> = {
   invoiceEdit: 'عُدّلت فاتورة',
   delete: 'نُقلت إلى سلة المهملات',
   restore: 'استُرجعت من سلة المهملات',
+  accountDelete: 'نُقل حساب إلى سلة المهملات',
+  accountRestore: 'استُرجع حساب من سلة المهملات',
 };
 
 export const MAX_CHANGE_LINES = 8;

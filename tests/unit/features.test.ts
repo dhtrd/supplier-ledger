@@ -19,6 +19,12 @@ import { expiredBackupFolders, rawLink } from '../../scripts/lib/dropbox';
 import { parseLedgerSheet, verifyAgainstSheet } from '../../scripts/import/excelLedger';
 import { decode } from '../../scripts/backup/snapshot';
 import {
+  nextTotals,
+  readTotals,
+  totalsOf,
+  ZERO_TOTALS,
+} from '../../src/features/accounts/domain/totals';
+import {
   archiveCandidates,
   daysBetween,
   needsLastMovement,
@@ -457,5 +463,31 @@ describe('notifications text', () => {
   it('keeps long details short', () => {
     const lines = describeChanges('invoice', base, { ...base, details: 'س'.repeat(400) });
     expect(lines[0]!.length).toBeLessThanOrEqual(200);
+  });
+});
+
+describe('account running totals', () => {
+  const e = (signed: number, date = '2026-10-01', deleted = false) => ({ signed, date, deleted });
+  it('create, edit, delete and restore move the totals exactly', () => {
+    let t = nextTotals(ZERO_TOTALS, null, e(1000));
+    expect(t).toEqual({ balance: 1000, entryCount: 1, lastDate: '2026-10-01' });
+    t = nextTotals(t, null, e(-300, '2026-10-05'));
+    expect(t).toEqual({ balance: 700, entryCount: 2, lastDate: '2026-10-05' });
+    t = nextTotals(t, e(1000), e(1500, '2026-09-01'));
+    expect(t).toEqual({ balance: 1200, entryCount: 2, lastDate: '2026-10-05' });
+    t = nextTotals(t, e(1500), e(1500, '2026-09-01', true));
+    expect(t).toEqual({ balance: -300, entryCount: 1, lastDate: '2026-10-05' });
+    t = nextTotals(t, e(1500, '2026-09-01', true), e(1500, '2026-09-01'));
+    expect(t.balance).toBe(1200);
+    expect(nextTotals(t, e(0), e(0))).toEqual(t);
+  });
+  it('from scratch equals step by step; uninitialised accounts are detected', () => {
+    expect(totalsOf([e(5), e(-2, '2026-12-01'), e(9, '2027-01-01', true)])).toEqual({
+      balance: 3,
+      entryCount: 2,
+      lastDate: '2026-12-01',
+    });
+    expect(readTotals({ name: 'x' })).toBeNull();
+    expect(readTotals({ balance: 0, entryCount: 0 })).toEqual(ZERO_TOTALS);
   });
 });

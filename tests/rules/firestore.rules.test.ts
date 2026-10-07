@@ -143,6 +143,9 @@ describe('criterion 6 — permissions table', () => {
       phone: '0511111111',
       group: 'suppliers',
       deleted: false,
+      balance: 0,
+      entryCount: 0,
+      lastDate: '',
       createdAt: serverTimestamp(),
       createdBy: uid,
     });

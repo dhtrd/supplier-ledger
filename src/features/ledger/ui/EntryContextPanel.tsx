@@ -5,6 +5,7 @@ import { useReady } from '../../../core/session';
 import { displayDate } from '../../../shared/lib/dates';
 import { balanceSide, formatAmount, SIDE_LABEL } from '../../../shared/lib/money';
 import { can } from '../../users/domain/types';
+import { sharedWatch } from '../../../shared/lib/sharedWatch';
 import { watchEntries, type EntrySnapshot } from '../data/entriesRepo';
 import { accountBalance, balanceAfter, latestEntries } from '../domain/statement';
 import { entryLabel, type Entry } from '../domain/types';
@@ -32,10 +33,16 @@ export function EntryContextPanel({
 
   useEffect(
     () =>
-      watchEntries(fb().db, accountId, setRows, (e) => {
-        reportError('entry-context', e);
-        setError(errorMessage(e));
-      }),
+      // Same shared listener as the statement: no second read of the account.
+      sharedWatch<EntrySnapshot[]>(
+        `entries:${accountId}`,
+        (n, f) => watchEntries(fb().db, accountId, n, f),
+        setRows,
+        (e) => {
+          reportError('entry-context', e);
+          setError(errorMessage(e));
+        },
+      ),
     [accountId],
   );
 
