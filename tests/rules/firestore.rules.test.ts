@@ -230,8 +230,10 @@ describe('criterion 8 — owner protection', () => {
     await assertFails(deleteDoc(doc(as('admin'), 'users/owner')));
   });
   it('only the owner edits settings (role labels, link minutes)', async () => {
-    const patch = (uid: string, minutes: number) => ({
+    const patch = (uid: string, minutes: number, idle = 30, countdown = 10) => ({
       linkMinutes: minutes,
+      idleMinutes: idle,
+      idleCountdownSeconds: countdown,
       payerName: 'شركة الضبيبي',
       roleLabels: { owner: 'المالك', admin: 'المدير', entry: 'محاسب' },
       updatedBy: uid,
@@ -240,6 +242,8 @@ describe('criterion 8 — owner protection', () => {
     await assertSucceeds(updateDoc(doc(as('owner'), 'settings/app'), patch('owner', 30)));
     await assertFails(updateDoc(doc(as('admin'), 'settings/app'), patch('admin', 30)));
     await assertFails(updateDoc(doc(as('owner'), 'settings/app'), patch('owner', 2)));
+    await assertFails(updateDoc(doc(as('owner'), 'settings/app'), patch('owner', 30, 0)));
+    await assertFails(updateDoc(doc(as('owner'), 'settings/app'), patch('owner', 30, 30, 2)));
   });
   it('only the owner reads backup status', async () => {
     await assertSucceeds(getDoc(doc(as('owner'), 'meta/backup')));
@@ -452,10 +456,11 @@ describe('criteria 3–5 — signing links', () => {
 describe('attachments and the audit log', () => {
   it('accepts a compressed image ≤ 300 KB and rejects a larger one', async () => {
     const db = as('entry');
-    const mk = (n: number) => {
+    const mk = (n: number, thumb = 20_000) => {
       const data = Bytes.fromUint8Array(new Uint8Array(n));
       return {
         data,
+        thumb: Bytes.fromUint8Array(new Uint8Array(thumb)),
         mime: 'image/webp',
         size: n,
         entryId: 'inv1',
@@ -465,6 +470,10 @@ describe('attachments and the audit log', () => {
     };
     await assertSucceeds(setDoc(doc(db, `accounts/${ACC_A}/attachments/a1`), mk(200_000)));
     await assertFails(setDoc(doc(db, `accounts/${ACC_A}/attachments/a2`), mk(320_000)));
+    await assertFails(setDoc(doc(db, `accounts/${ACC_A}/attachments/a4`), mk(100_000, 70_000)));
+    const { thumb: _drop, ...noThumb } = mk(100_000);
+    void _drop;
+    await assertFails(setDoc(doc(db, `accounts/${ACC_A}/attachments/a5`), noThumb));
   });
   it('rejects a non-image attachment type', async () => {
     const db = as('entry');

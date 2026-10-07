@@ -46,6 +46,64 @@ export function displayDate(iso: string): string {
   return iso.replace(/-/g, '/');
 }
 
+/**
+ * Date + time for display, always 12-hour with ص/م (owner decision), Gregorian
+ * calendar, Latin digits, Riyadh time — e.g. «07/10/2026، 2:58 م».
+ */
+export function formatDateTime(ms: number, dateStyle: 'short' | 'medium' = 'medium'): string {
+  return new Date(ms).toLocaleString('ar-SA-u-ca-gregory-nu-latn', {
+    timeZone: 'Asia/Riyadh',
+    dateStyle,
+    timeStyle: 'short',
+    hourCycle: 'h12',
+  });
+}
+
+/**
+ * File-name stamp in Riyadh time, 12-hour (owner decision):
+ * «2026-10-07_02-58م» or, with seconds, «2026-10-07_02-58-30م».
+ */
+export function fileStamp(ms: number, withSeconds = false): string {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Riyadh',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+    })
+      .formatToParts(new Date(ms))
+      .map((x) => [x.type, x.value]),
+  );
+  const period = parts.dayPeriod === 'AM' ? 'ص' : 'م';
+  const time = [parts.hour, parts.minute, ...(withSeconds ? [parts.second] : [])].join('-');
+  return `${todayRiyadh(new Date(ms))}_${time}${period}`;
+}
+
+/** Wall clock for the lock screen: Riyadh time, 12-hour — { time: '3:02', period: 'م' }. */
+export function clock12(ms: number): { time: string; period: 'ص' | 'م' } {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Riyadh',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    })
+      .formatToParts(new Date(ms))
+      .map((x) => [x.type, x.value]),
+  );
+  return { time: `${parts.hour}:${parts.minute}`, period: parts.dayPeriod === 'AM' ? 'ص' : 'م' };
+}
+
+const WEEKDAYS = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+
+/** «الأربعاء 2026/10/07» in Riyadh time. */
+export function longDay(ms: number): string {
+  const iso = todayRiyadh(new Date(ms));
+  const [y, m, d] = iso.split('-').map(Number);
+  return `${WEEKDAYS[new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay()]} ${displayDate(iso)}`;
+}
+
 /** Today's date in Asia/Riyadh as 'YYYY-MM-DD'. */
 export function todayRiyadh(now: Date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh' }).format(now);

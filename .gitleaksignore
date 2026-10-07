@@ -1,0 +1,3 @@
+# False positive (curl-auth-user): README placeholder "-u APP_KEY:APP_SECRET" in commit 6214262.
+# It contains no secret; the command was rewritten afterwards. History is public, so it stays ignored by fingerprint.
+6214262453d5f0a268292da6ffab2e19822b6490:README.md:curl-auth-user:45

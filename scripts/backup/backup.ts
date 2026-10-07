@@ -1,92 +1,161 @@
 /**
- * Daily backup → the owner's Dropbox (run by .github/workflows/backup.yml).
+ * Backup → the owner's Dropbox (run by .github/workflows/backup.yml).
  *
- * Writes /backups/YYYY-MM-DD/data.json (every document except image bytes)
- * and uploads only NEW images to /attachments/<account>/<id>.<ext>. Then
- * records meta/backup.lastBackupAt, which the owner sees in Settings with a
- * warning if it is older than 26 hours. Any failure exits non-zero so GitHub
- * reports it — nothing is swallowed. Data is never printed to the log
- * (the repository and its Actions logs are public).
+ *   node scripts/backup/backup.ts             daily run (12:00 Riyadh)
+ *   node scripts/backup/backup.ts --requests  on-demand: runs only if a
+ *                                             manager pressed «نسخة الآن»
+ *
+ * 1. Moves new original images (≤ 300 KB each) out of Firestore into
+ *    /attachments/<account>/<id>.<ext> and stores a view link instead; the
+ *    small thumbnail stays in Firestore.
+ * 2. Writes every document, AES-256-GCM encrypted, to
+ *    /backups/YYYY-MM-DD/data[-hh-mm-ssص|م].json.enc, Riyadh time (key: BACKUP_ENCRYPTION_KEY).
+ * 3. Deletes backup folders older than 30 days (images are never deleted —
+ *    they are the only copy of the originals).
+ * 4. Records meta/backup for the owner's Settings page.
+ *
+ * Nothing is printed except counts (the repository and its logs are public).
+ * Any failure exits non-zero.
  *
  * Env: FIREBASE_SERVICE_ACCOUNT, DROPBOX_APP_KEY, DROPBOX_APP_SECRET,
- *      DROPBOX_REFRESH_TOKEN
+ *      DROPBOX_REFRESH_TOKEN, BACKUP_ENCRYPTION_KEY
  */
-import { Timestamp } from 'firebase-admin/firestore';
-import { adminDb, runMain } from '../lib/admin.ts';
+import { FieldValue, Timestamp, type QueryDocumentSnapshot } from 'firebase-admin/firestore';
+import { adminDb, flag, runMain } from '../lib/admin.ts';
+import {
+  deletePath,
+  dropboxToken,
+  expiredBackupFolders,
+  listFolderNames,
+  sharedLink,
+  upload,
+} from '../lib/dropbox.ts';
+import { encryptText } from '../../src/shared/lib/backupCrypto.ts';
+import { fileStamp, todayRiyadh } from '../../src/shared/lib/dates.ts';
 import { encode, type Snapshot } from './snapshot.ts';
 
-const COLLECTIONS = ['users', 'settings', 'counters', 'accounts', 'signLinks', 'auditLog', 'meta'];
+const COLLECTIONS = [
+  'users',
+  'settings',
+  'counters',
+  'accounts',
+  'signLinks',
+  'auditLog',
+  'meta',
+  'lockouts',
+  'backupRequests',
+];
+const RETENTION_DAYS = 30;
 
-function need(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing environment variable ${name}`);
-  return v;
-}
-
-async function dropboxToken(): Promise<string> {
-  const res = await fetch('https://api.dropboxapi.com/oauth2/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: need('DROPBOX_REFRESH_TOKEN'),
-      client_id: need('DROPBOX_APP_KEY'),
-      client_secret: need('DROPBOX_APP_SECRET'),
-    }),
-  });
-  if (!res.ok) throw new Error(`Dropbox auth failed (HTTP ${res.status})`);
-  return ((await res.json()) as { access_token: string }).access_token;
-}
-
-async function upload(token: string, path: string, body: Uint8Array | string): Promise<void> {
-  const res = await fetch('https://content.dropboxapi.com/2/files/upload', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/octet-stream',
-      // Dropbox-API-Arg must be ASCII; paths here are ASCII by construction.
-      'Dropbox-API-Arg': JSON.stringify({ path, mode: 'overwrite', mute: true }),
-    },
-    body: typeof body === 'string' ? body : Buffer.from(body),
-  });
-  if (!res.ok) throw new Error(`Dropbox upload failed for ${path} (HTTP ${res.status})`);
+function backupKey(): string {
+  const k = process.env.BACKUP_ENCRYPTION_KEY;
+  if (!k) throw new Error('Missing environment variable BACKUP_ENCRYPTION_KEY');
+  return k;
 }
 
 runMain(async () => {
   const db = adminDb();
-  const token = await dropboxToken();
-  const meta = await db.doc('meta/backup').get();
-  const since = (meta.get('lastBackupAt') as Timestamp | undefined)?.toMillis() ?? 0;
+  const key = backupKey();
 
-  const snapshot: Snapshot = { version: 1, takenAt: Date.now(), docs: {} };
-  let images = 0;
-  for (const name of COLLECTIONS) {
-    for (const d of (await db.collection(name).get()).docs)
-      snapshot.docs[d.ref.path] = encode(d.data());
-  }
-  for (const acc of (await db.collection('accounts').get()).docs) {
-    for (const d of (await acc.ref.collection('entries').get()).docs)
-      snapshot.docs[d.ref.path] = encode(d.data());
-    for (const d of (await acc.ref.collection('attachments').get()).docs) {
-      const { data, ...rest } = d.data() as {
-        data: Uint8Array;
-        mime: string;
-        createdAt: Timestamp;
-      };
-      snapshot.docs[d.ref.path] = encode({ ...rest, file: `/attachments/${acc.id}/${d.id}` });
-      if (rest.createdAt.toMillis() > since) {
-        const ext = rest.mime === 'image/webp' ? 'webp' : 'jpg';
-        await upload(token, `/attachments/${acc.id}/${d.id}.${ext}`, data);
-        images++;
-      }
+  let requests: QueryDocumentSnapshot[] = [];
+  if (flag('requests')) {
+    requests = (
+      await db.collection('backupRequests').where('status', '==', 'pending').limit(20).get()
+    ).docs;
+    if (!requests.length) {
+      console.log('no pending backup requests');
+      return;
     }
   }
 
-  const day = new Date(snapshot.takenAt).toISOString().slice(0, 10);
-  await upload(token, `/backups/${day}/data.json`, JSON.stringify(snapshot));
-  const docs = Object.keys(snapshot.docs).length;
-  await db
-    .doc('meta/backup')
-    .set({ lastBackupAt: Timestamp.fromMillis(snapshot.takenAt), docs, images });
-  console.log(`backup ok: ${docs} documents, ${images} new images`);
+  try {
+    const token = await dropboxToken();
+
+    // ---- 1. move original images to Dropbox --------------------------------
+    let moved = 0;
+    let moveError: unknown = null;
+    const accounts = (await db.collection('accounts').get()).docs;
+    for (const acc of accounts) {
+      const pending = await acc.ref.collection('attachments').where('data', '!=', null).get();
+      for (const d of pending.docs) {
+        try {
+          const { data, mime } = d.data() as { data: Uint8Array; mime: string };
+          const ext = mime === 'image/webp' ? 'webp' : 'jpg';
+          const path = `/attachments/${acc.id}/${d.id}.${ext}`;
+          await upload(token, path, data);
+          const url = await sharedLink(token, path);
+          await d.ref.update({
+            url,
+            dropboxPath: path,
+            movedAt: Timestamp.now(),
+            data: FieldValue.delete(),
+          });
+          moved++;
+        } catch (e) {
+          moveError ??= e; // keep going; report after the data backup is safe
+        }
+      }
+    }
+
+    // ---- 2. encrypted snapshot ---------------------------------------------
+    const snapshot: Snapshot = { version: 1, takenAt: Date.now(), docs: {} };
+    for (const name of COLLECTIONS)
+      for (const d of (await db.collection(name).get()).docs)
+        snapshot.docs[d.ref.path] = encode(d.data());
+    for (const acc of accounts) {
+      for (const sub of ['entries', 'attachments'])
+        for (const d of (await acc.ref.collection(sub).get()).docs)
+          snapshot.docs[d.ref.path] = encode(d.data());
+    }
+    const json = JSON.stringify(snapshot);
+    const envelope = await encryptText(json, { key });
+    // Riyadh date folder; on-demand copies carry a 12-hour time stamp.
+    const day = todayRiyadh(new Date(snapshot.takenAt));
+    const file = requests.length
+      ? `/backups/${day}/data-${fileStamp(snapshot.takenAt, true).slice(11)}.json.enc`
+      : `/backups/${day}/data.json.enc`;
+    await upload(token, file, JSON.stringify(envelope));
+    const docs = Object.keys(snapshot.docs).length;
+
+    // ---- 3. retention ------------------------------------------------------
+    const expired = expiredBackupFolders(
+      await listFolderNames(token, '/backups'),
+      day,
+      RETENTION_DAYS,
+    );
+    for (const name of expired) await deletePath(token, `/backups/${name}`);
+
+    // ---- 4. status ---------------------------------------------------------
+    await db.doc('meta/backup').set({
+      lastBackupAt: Timestamp.fromMillis(snapshot.takenAt),
+      docs,
+      images: moved,
+      // Firestore holds only documents + thumbnails now; JSON size ≈ usage.
+      bytes: Buffer.byteLength(json),
+      encrypted: true,
+    });
+    for (const r of requests) await r.ref.update({ status: 'done', doneAt: Timestamp.now(), file });
+    console.log(
+      `backup ok: ${docs} documents, ${moved} images moved, ${expired.length} old folders removed`,
+    );
+    if (moveError)
+      throw new Error(
+        `data backup saved, but moving an image failed: ${moveError instanceof Error ? moveError.message : 'unknown'}`,
+      );
+  } catch (e) {
+    for (const r of requests)
+      await r.ref
+        .update({
+          status: 'failed',
+          doneAt: Timestamp.now(),
+          message: 'فشل النسخ — راجع GitHub Actions',
+        })
+        .catch((err: unknown) =>
+          console.error(
+            'could not mark request as failed:',
+            err instanceof Error ? err.message : err,
+          ),
+        );
+    throw e;
+  }
 });

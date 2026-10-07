@@ -13,11 +13,37 @@ service cloud.firestore {
     function docPath(p) { return /databases/$(database)/documents/$(p); }
     function signedIn() { return request.auth != null; }
     function userDoc() { return get(/databases/$(database)/documents/users/$(request.auth.uid)); }
-    function isActive() {
+    // Lockout key = sha256(lower(email)) as hex; the app computes the same value.
+    function emailKey() {
+      return hashing.sha256(request.auth.token.get('email', '').lower()).toHexString().lower();
+    }
+    // 5 failed sign-in / PIN attempts lock the account for EVERY role (owner
+    // included) until the owner — or, for the owner, the Firebase console —
+    // resets the counter.
+    function lockoutPath() { return /databases/$(database)/documents/lockouts/$(emailKey()); }
+    function lockedOut() {
+      return exists(lockoutPath()) && get(lockoutPath()).data.fails >= 5;
+    }
+    // Exactly one failure is added to the caller's counter in this batch.
+    function failureCounted() {
+      return getAfter(lockoutPath()).data.lastFailAt == request.time
+        && ((exists(lockoutPath()) && getAfter(lockoutPath()).data.fails == get(lockoutPath()).data.fails + 1)
+            || (!exists(lockoutPath()) && getAfter(lockoutPath()).data.fails == 1));
+    }
+    function userActive() {
       return signedIn()
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
         && userDoc().data.active == true;
     }
+    // Quick unlock: while the user's screen is locked the rules refuse every
+    // read and write of business data (see /screenLocks below).
+    function screenPath(uid) { return /databases/$(database)/documents/screenLocks/$(uid); }
+    function screenLocked() {
+      return exists(screenPath(request.auth.uid)) && get(screenPath(request.auth.uid)).data.locked == true;
+    }
+    // Signed in, enabled, not locked out — the screen may still be locked.
+    function isActiveRaw() { return userActive() && !lockedOut(); }
+    function isActive() { return isActiveRaw() && !screenLocked(); }
     function myRole() { return userDoc().data.role; }
     function isOwner() { return isActive() && myRole() == 'owner'; }
     function isManager() { return isActive() && myRole() in ['owner', 'admin']; }
@@ -80,11 +106,17 @@ service cloud.firestore {
 
     // ---------- settings (owner only) ---------------------------------------
     match /settings/app {
-      allow get: if isActive();
+      allow get: if isActiveRaw();
       allow update: if isOwner()
-        && changed().hasOnly(['linkMinutes', 'payerName', 'roleLabels', 'updatedAt', 'updatedBy'])
+        && changed().hasOnly(['linkMinutes', 'payerName', 'roleLabels', 'idleMinutes',
+                              'idleCountdownSeconds', 'updatedAt', 'updatedBy'])
         && request.resource.data.linkMinutes is int
         && request.resource.data.linkMinutes >= 5 && request.resource.data.linkMinutes <= 1440
+        && request.resource.data.idleMinutes is int
+        && request.resource.data.idleMinutes >= 1 && request.resource.data.idleMinutes <= 240
+        && request.resource.data.idleCountdownSeconds is int
+        && request.resource.data.idleCountdownSeconds >= 5
+        && request.resource.data.idleCountdownSeconds <= 120
         && shortText(request.resource.data.payerName, 100)
         && request.resource.data.roleLabels.keys().hasOnly(['owner', 'admin', 'entry'])
         && shortText(request.resource.data.roleLabels.owner, 40)
@@ -98,6 +130,158 @@ service cloud.firestore {
     match /meta/{doc} {
       allow get: if isOwner();
       allow write: if false;
+    }
+
+    // ---------- failed sign-in counter (per email hash) ----------------------
+    match /lockouts/{key} {
+      function failOnly() {
+        return changed().hasOnly(['fails', 'lastFailAt'])
+          && request.resource.data.lastFailAt == request.time;
+      }
+      allow get: if isOwner() || (signedIn() && key == emailKey());
+      // Anyone (the login page is unauthenticated) may add exactly one failure.
+      allow create: if key.matches('^[0-9a-f]{64}$')
+        && request.resource.data.keys().hasOnly(['fails', 'lastFailAt'])
+        && request.resource.data.fails == 1
+        && request.resource.data.lastFailAt == request.time;
+      allow update: if resource.data.fails < 5 && failOnly()
+        && request.resource.data.fails == resource.data.fails + 1;
+      // A successful sign-in clears its own counter (only while not locked).
+      allow update: if signedIn() && key == emailKey() && resource.data.fails < 5
+        && changed().hasOnly(['fails']) && request.resource.data.fails == 0;
+      // Reset by the user's own correct PIN in the unlock batch (the
+      // /screenLocks rule checks the PIN; this one checks it is that batch).
+      allow update: if signedIn() && key == emailKey()
+        && changed().hasOnly(['fails']) && request.resource.data.fails == 0
+        && get(screenPath(request.auth.uid)).data.locked == true
+        && getAfter(screenPath(request.auth.uid)).data.locked == false;
+      // The owner unlocks anyone else.
+      allow update: if isOwner()
+        && changed().hasOnly(['fails', 'unlockedAt', 'unlockedBy'])
+        && request.resource.data.fails == 0
+        && request.resource.data.unlockedAt == request.time
+        && request.resource.data.unlockedBy == request.auth.uid;
+      allow delete: if false;
+    }
+
+    // ---------- quick unlock (server-enforced screen lock) ------------------
+    // proof = sha256("sl-pin:v1:" + uid + ":" + pin) computed in the app;
+    // pins/{uid}.check = sha256(proof). Nobody can read pins or attempts, so the
+    // 6-digit PIN cannot be brute-forced offline; online, every guess must first
+    // be committed together with +1 on the 5-attempt counter, and only then can
+    // a following write unlock with it (commit → reveal), so no guess is free.
+    match /pins/{uid} {
+      function recentLogin() {
+        return request.time < timestamp.value(request.auth.token.auth_time * 1000) + duration.value(5, 'm');
+      }
+      allow read: if false;
+      // Set / change the PIN: only within 5 minutes of entering the password.
+      allow create, update: if isActive() && uid == request.auth.uid && recentLogin()
+        && request.resource.data.keys().hasOnly(['check', 'updatedAt'])
+        && request.resource.data.check is string
+        && request.resource.data.check.matches('^[0-9a-f]{64}$')
+        && request.resource.data.updatedAt == request.time
+        && getAfter(screenPath(uid)).data.pinSet == true
+        && getAfter(screenPath(uid)).data.pinAt == request.time;
+      allow delete: if isActive() && uid == request.auth.uid
+        && getAfter(screenPath(uid)).data.pinSet == false;
+    }
+
+    match /unlockAttempts/{uid} {
+      allow read: if false;
+      // Commit a guess: only while locked, and it costs one failed attempt.
+      allow create, update: if userActive() && uid == request.auth.uid
+        && !lockedOut()
+        && get(screenPath(uid)).data.locked == true
+        && request.resource.data.keys().hasOnly(['proof', 'at'])
+        && request.resource.data.proof is string
+        && request.resource.data.proof.matches('^[0-9a-f]{64}$')
+        && request.resource.data.at == request.time
+        && failureCounted();
+      // Removed in the same batch that unlocks.
+      allow delete: if signedIn() && uid == request.auth.uid
+        && get(screenPath(uid)).data.locked == true
+        && getAfter(screenPath(uid)).data.locked == false;
+    }
+
+    match /screenLocks/{uid} {
+      function mine() { return signedIn() && uid == request.auth.uid; }
+      function pinsPath() { return /databases/$(database)/documents/pins/$(uid); }
+      function attemptPath() { return /databases/$(database)/documents/unlockAttempts/$(uid); }
+      function activity(d) {
+        return d.activeAt == request.time
+          && d.activeBy is string && d.activeBy.size() >= 8 && d.activeBy.size() <= 64;
+      }
+      // pinVer: random id of the current PIN, so a fingerprint key made for an
+      // older PIN is recognised as stale on every device.
+      function pinFlag(d) {
+        return d.pinSet is bool && d.pinSet == existsAfter(pinsPath()) && d.pinAt == request.time
+          && d.pinVer is string && d.pinVer.size() <= 64
+          && (d.pinSet == false || d.pinVer.size() >= 16);
+      }
+      function unlocking() {
+        return resource.data.locked == true
+          && changed().hasOnly(['locked', 'at', 'activeAt', 'activeBy'])
+          && request.resource.data.locked == false
+          && request.resource.data.at == request.time
+          && activity(request.resource.data);
+      }
+      // The committed guess is newer than the lock and matches the PIN.
+      function committedGuessOk() {
+        return exists(attemptPath())
+          && get(attemptPath()).data.at > resource.data.at
+          && hashing.sha256(get(attemptPath()).data.proof).toHexString().lower()
+             == get(pinsPath()).data.check
+          && !existsAfter(attemptPath());
+      }
+      // A correct guess may be the 5th: the counter it raised is reset with it.
+      function counterReset() {
+        return !exists(lockoutPath())
+          || ((get(lockoutPath()).data.fails < 5
+               || get(lockoutPath()).data.lastFailAt == get(attemptPath()).data.at)
+              && getAfter(lockoutPath()).data.fails == 0);
+      }
+
+      allow get: if mine();
+      allow list, delete: if false;
+      allow create: if isActive() && mine()
+        && request.resource.data.keys().hasOnly(['locked', 'at', 'activeAt', 'activeBy', 'pinSet', 'pinAt', 'pinVer'])
+        && request.resource.data.locked == false
+        && request.resource.data.at == request.time
+        && activity(request.resource.data)
+        && pinFlag(request.resource.data);
+      // «Last active» heartbeat (lets another device of the same user decide
+      // not to lock the account while this one is in use).
+      allow update: if isActive() && mine()
+        && changed().hasOnly(['activeAt', 'activeBy'])
+        && activity(request.resource.data);
+      // PIN set / changed / removed (same batch as /pins).
+      allow update: if isActive() && mine()
+        && changed().hasOnly(['pinSet', 'pinAt', 'pinVer'])
+        && pinFlag(request.resource.data);
+      // Lock: only with a PIN to come back with.
+      allow update: if isActive() && mine()
+        && resource.data.pinSet == true && exists(pinsPath())
+        && changed().hasOnly(['locked', 'at'])
+        && request.resource.data.locked == true
+        && request.resource.data.at == request.time;
+      // Unlock with the PIN / fingerprint (both reveal the committed proof).
+      allow update: if mine() && userActive() && unlocking()
+        && committedGuessOk() && counterReset();
+      // Unlock by signing in again with the password after the lock.
+      allow update: if mine() && isActiveRaw() && unlocking()
+        && request.auth.token.auth_time * 1000 > resource.data.at.toMillis();
+    }
+
+    // ---------- on-demand backup requests (picked up by GitHub Actions) ------
+    match /backupRequests/{id} {
+      allow read: if isManager();
+      allow create: if isManager()
+        && request.resource.data.keys().hasOnly(['requestedBy', 'requestedAt', 'status'])
+        && request.resource.data.requestedBy == request.auth.uid
+        && request.resource.data.requestedAt == request.time
+        && request.resource.data.status == 'pending';
+      allow update, delete: if false;
     }
 
     // ---------- voucher counter ---------------------------------------------
@@ -148,9 +332,9 @@ service cloud.firestore {
       // ---------- entries ----------------------------------------------------
       match /entries/{entryId} {
         function validEntry(d) {
-          return d.keys().hasOnly(['type', 'amount', 'signed', 'date', 'details', 'attachments',
-                                   'voucherNo', 'signLinkId', 'signature', 'deleted', 'deletedAt',
-                                   'auditId', 'legacyId',
+          return d.keys().hasOnly(['type', 'subtype', 'amount', 'signed', 'date', 'details',
+                                   'attachments', 'voucherNo', 'signLinkId', 'signature', 'deleted',
+                                   'deletedAt', 'auditId', 'legacyId',
                                    'createdAt', 'createdBy', 'updatedAt', 'updatedBy'])
             && d.type in ['invoice', 'payment', 'note']
             && d.amount is int && d.amount >= 0 && d.amount <= 100000000000
@@ -160,6 +344,8 @@ service cloud.firestore {
             && isDate(d.date)
             && shortText(d.details, 500)
             && d.attachments is list && d.attachments.size() <= 5
+            // A payment may be marked as a return (مرتجع) or a discount (خصم).
+            && (!('subtype' in d) || (d.type == 'payment' && d.subtype in ['return', 'discount']))
             && d.deleted is bool;
         }
         function voucherAllocated(d) {
@@ -178,7 +364,10 @@ service cloud.firestore {
             && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.accountId == accountId
             && d.signature.name == get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.signerName
             && d.signature.image == get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.signatureImage
-            && d.signature.signedAt == get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.signedAt;
+            && d.signature.signedAt == get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.signedAt
+            // …and only if the recipient signed for exactly this amount/voucher.
+            && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.amount == d.amount
+            && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.voucherNo == d.get('voucherNo', null);
         }
 
         allow read: if canAccess(accountId);
@@ -199,6 +388,7 @@ service cloud.firestore {
           && !('signature' in resource.data)
           && validEntry(request.resource.data)
           && request.resource.data.type == resource.data.type
+          && request.resource.data.get('subtype', null) == resource.data.get('subtype', null)
           && request.resource.data.get('voucherNo', null) == resource.data.get('voucherNo', null)
           && request.resource.data.createdAt == resource.data.createdAt
           && request.resource.data.createdBy == resource.data.createdBy
@@ -220,13 +410,18 @@ service cloud.firestore {
         allow delete: if false;
       }
 
-      // ---------- attachments (compressed images, ≤ 300 KB) ----------------
+      // ---------- attachments --------------------------------------------
+      // A small thumbnail (≤ 60 KB) stays here for good; the original (≤ 300 KB)
+      // is moved to the owner's Dropbox by the nightly job (Admin SDK), which
+      // replaces `data` with a view link.
       match /attachments/{attId} {
         allow read: if canAccess(accountId);
         allow create: if canAccess(accountId)
-          && request.resource.data.keys().hasOnly(['data', 'mime', 'size', 'entryId', 'createdAt', 'createdBy'])
+          && request.resource.data.keys().hasOnly(['data', 'thumb', 'mime', 'size', 'entryId', 'createdAt', 'createdBy'])
           && request.resource.data.data is bytes
           && request.resource.data.data.size() <= 307200
+          && request.resource.data.thumb is bytes
+          && request.resource.data.thumb.size() <= 61440
           && request.resource.data.size == request.resource.data.data.size()
           && request.resource.data.mime in ['image/webp', 'image/jpeg']
           && request.resource.data.entryId is string
@@ -264,6 +459,7 @@ service cloud.firestore {
         && request.resource.data.ttlMinutes == settings().linkMinutes
         && entryAt(request.resource.data).type == 'payment'
         && entryAt(request.resource.data).deleted == false
+        && !('subtype' in entryAt(request.resource.data))
         && !('signature' in entryAt(request.resource.data))
         && entryAt(request.resource.data).amount == request.resource.data.amount
         && entryAt(request.resource.data).voucherNo == request.resource.data.voucherNo

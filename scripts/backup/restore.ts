@@ -1,26 +1,29 @@
 /**
- * Restores a backup snapshot (data.json downloaded from Dropbox).
+ * Restores a backup into Firestore.
  *
- *   node scripts/backup/restore.ts --file data.json --confirm <projectId>
+ *   node scripts/backup/restore.ts --file data.json.enc --confirm <projectId>
  *
- * Refuses to run unless --confirm matches the target project id, so a restore
- * can never hit the wrong project by accident. Image bytes are restored
- * separately from /attachments (documents keep a pointer to the file).
+ * Accepts the encrypted Dropbox backups (key from BACKUP_ENCRYPTION_KEY), the
+ * passphrase-protected on-device downloads (*.slbackup, passphrase from
+ * BACKUP_PASSPHRASE) and old plain data.json files. Refuses to run unless
+ * --confirm matches the target project id. Images: documents keep their
+ * thumbnail and Dropbox link; run restore-images.ts to verify/relink.
  */
 import { readFileSync } from 'node:fs';
 import { adminApp, adminDb, arg, runMain } from '../lib/admin.ts';
-import { decode, type Snapshot } from './snapshot.ts';
+import { decode } from './snapshot.ts';
+import { readSnapshot } from './readSnapshot.ts';
 
 runMain(async () => {
   const file = arg('file');
-  if (!file) throw new Error('Usage: --file <data.json> --confirm <projectId>');
+  if (!file) throw new Error('Usage: --file <backup> --confirm <projectId>');
   const db = adminDb();
   const projectId = adminApp().options.projectId ?? process.env.FIREBASE_PROJECT_ID ?? '';
   if (!projectId) throw new Error('Cannot determine the target project id.');
   if (arg('confirm') !== projectId)
     throw new Error(`Refusing: pass --confirm ${projectId} to restore into this project.`);
 
-  const snapshot = JSON.parse(readFileSync(file, 'utf8')) as Snapshot;
+  const snapshot = await readSnapshot(readFileSync(file, 'utf8'));
   if (snapshot.version !== 1)
     throw new Error(`Unsupported snapshot version ${String(snapshot.version)}`);
   let batch = db.batch();
