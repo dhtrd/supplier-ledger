@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom';
+import { MobileBar } from './MobileBar';
 import {
   NotificationsProvider,
   useNotifications,
@@ -54,6 +55,7 @@ function ShellFrame() {
           {settings.roleLabels[profile.role]} · {profile.name}
         </div>
       </header>
+      <MobileBar />
       <main className="shell-main">
         <Outlet />
       </main>

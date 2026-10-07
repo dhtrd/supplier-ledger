@@ -1322,3 +1322,37 @@ textarea.input {
   flex-direction: column;
   gap: 8px;
 }
+
+/* ---------- phones: top bar with the reload button ---------- */
+.mobile-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: calc(4px + env(safe-area-inset-top)) 8px 4px var(--gutter);
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
+}
+.mobile-bar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 700 17px var(--serif);
+}
+.mobile-bar .reload-btn.armed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--alayh);
+  color: #fff;
+  font: 600 13px var(--sans);
+}
+@media (min-width: 900px) {
+  .mobile-bar {
+    display: none;
+  }
+}
