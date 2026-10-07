@@ -9,7 +9,7 @@
  *    /attachments/<account>/<id>.<ext> and stores a view link instead; the
  *    small thumbnail stays in Firestore.
  * 2. Writes every document, AES-256-GCM encrypted, to
- *    /backups/YYYY-MM-DD/data[-HHMMSS].json.enc (key: BACKUP_ENCRYPTION_KEY).
+ *    /backups/YYYY-MM-DD/data[-hh-mm-ssص|م].json.enc, Riyadh time (key: BACKUP_ENCRYPTION_KEY).
  * 3. Deletes backup folders older than 30 days (images are never deleted —
  *    they are the only copy of the originals).
  * 4. Records meta/backup for the owner's Settings page.
@@ -31,6 +31,7 @@ import {
   upload,
 } from '../lib/dropbox.ts';
 import { encryptText } from '../../src/shared/lib/backupCrypto.ts';
+import { fileStamp, todayRiyadh } from '../../src/shared/lib/dates.ts';
 import { encode, type Snapshot } from './snapshot.ts';
 
 const COLLECTIONS = [
@@ -108,10 +109,10 @@ runMain(async () => {
     }
     const json = JSON.stringify(snapshot);
     const envelope = await encryptText(json, { key });
-    const iso = new Date(snapshot.takenAt).toISOString();
-    const day = iso.slice(0, 10);
+    // Riyadh date folder; on-demand copies carry a 12-hour time stamp.
+    const day = todayRiyadh(new Date(snapshot.takenAt));
     const file = requests.length
-      ? `/backups/${day}/data-${iso.slice(11, 19).replace(/:/g, '')}.json.enc`
+      ? `/backups/${day}/data-${fileStamp(snapshot.takenAt, true).slice(11)}.json.enc`
       : `/backups/${day}/data.json.enc`;
     await upload(token, file, JSON.stringify(envelope));
     const docs = Object.keys(snapshot.docs).length;

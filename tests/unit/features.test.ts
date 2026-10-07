@@ -210,3 +210,16 @@ describe('time display', () => {
     expect(formatDateTime(Date.UTC(2026, 9, 7, 6, 5), 'short')).toMatch(/9:05\s*ص/);
   });
 });
+
+describe('backup file names (12-hour, Riyadh)', () => {
+  it('stamps download and Dropbox names', async () => {
+    const { fileStamp } = await import('../../src/shared/lib/dates');
+    const { backupFileName } = await import('../../src/features/backup/domain/snapshot');
+    expect(fileStamp(Date.UTC(2026, 9, 7, 11, 58, 30))).toBe('2026-10-07_02-58م');
+    expect(fileStamp(Date.UTC(2026, 9, 7, 11, 58, 30), true)).toBe('2026-10-07_02-58-30م');
+    expect(fileStamp(Date.UTC(2026, 9, 7, 21, 5))).toBe('2026-10-08_12-05ص'); // after midnight Riyadh
+    expect(backupFileName(Date.UTC(2026, 9, 7, 6, 0))).toBe(
+      'supplier-ledger-backup-2026-10-07_09-00ص.slbackup',
+    );
+  });
+});

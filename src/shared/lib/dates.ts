@@ -59,6 +59,27 @@ export function formatDateTime(ms: number, dateStyle: 'short' | 'medium' = 'medi
   });
 }
 
+/**
+ * File-name stamp in Riyadh time, 12-hour (owner decision):
+ * «2026-10-07_02-58م» or, with seconds, «2026-10-07_02-58-30م».
+ */
+export function fileStamp(ms: number, withSeconds = false): string {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Riyadh',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+    })
+      .formatToParts(new Date(ms))
+      .map((x) => [x.type, x.value]),
+  );
+  const period = parts.dayPeriod === 'AM' ? 'ص' : 'م';
+  const time = [parts.hour, parts.minute, ...(withSeconds ? [parts.second] : [])].join('-');
+  return `${todayRiyadh(new Date(ms))}_${time}${period}`;
+}
+
 /** Today's date in Asia/Riyadh as 'YYYY-MM-DD'. */
 export function todayRiyadh(now: Date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh' }).format(now);

@@ -1,3 +1,4 @@
+import { fileStamp } from '../../../shared/lib/dates';
 import { Bytes, Timestamp } from 'firebase/firestore';
 import { toBase64 } from '../../../shared/lib/backupCrypto';
 
@@ -28,8 +29,7 @@ export interface Snapshot {
   docs: Record<string, Json>;
 }
 
+/** Download name, Riyadh time, 12-hour: supplier-ledger-backup-2026-10-07_02-58م.slbackup */
 export function backupFileName(takenAt: number): string {
-  const d = new Date(takenAt);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `supplier-ledger-backup-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.slbackup`;
+  return `supplier-ledger-backup-${fileStamp(takenAt)}.slbackup`;
 }
