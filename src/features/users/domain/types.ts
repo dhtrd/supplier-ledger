@@ -26,8 +26,12 @@ export const can = {
   editSettings: (r: Role) => r === 'owner',
   viewBackup: (r: Role) => r === 'owner',
   viewAudit: (r: Role) => r === 'owner' || r === 'admin',
-  /** Approved hardening: balances are hidden from data-entry users (UI only). */
-  seeBalances: (r: Role) => r !== 'entry',
+  /**
+   * Balances (list, net, statement and running balance, side panel, Excel/PDF,
+   * voucher print). Owner decision 2026-10-07: every role, data-entry users in
+   * their assigned accounts (the rules already limit them to those).
+   */
+  seeBalances: (r: Role) => r === 'owner' || r === 'admin' || r === 'entry',
   /** On-demand backups (request + encrypted download). */
   backupNow: (r: Role) => r === 'owner' || r === 'admin',
   /** Notifications tab (signed-voucher/invoice edits, trash moves and restores). */
