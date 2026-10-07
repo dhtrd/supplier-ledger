@@ -42,7 +42,7 @@ npm run test:rules   # يحتاج Java 21 (محاكي Firestore)
    وافق وانسخ الرمز (code).
 5. على جهازك:
    ```bash
-   curl https://api.dropboxapi.com/oauth2/token -d code=CODE -d grant_type=authorization_code -u APP_KEY:APP_SECRET
+   curl https://api.dropboxapi.com/oauth2/token -d code=CODE -d grant_type=authorization_code -d client_id=APP_KEY -d client_secret=APP_SECRET
    ```
    انسخ `refresh_token` من الرد.
 6. أضف أسرار GitHub: `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`, `DROPBOX_REFRESH_TOKEN`.
