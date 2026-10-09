@@ -8,7 +8,7 @@ export interface SignState {
 }
 
 export function signStateOf(entry: Entry, links: SignLink[], now: number): SignState {
-  if (entry.type !== 'payment') return { kind: 'none' };
+  if (entry.type !== 'payment' && entry.type !== 'confirm') return { kind: 'none' };
   if (entry.signature) return { kind: 'signed' };
   const mine = links.filter((l) => l.entryId === entry.id);
   const signed = mine.find((l) => l.status === 'signed');

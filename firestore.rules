@@ -71,6 +71,10 @@ service cloud.firestore {
     function isDate(v) {
       return v is string && v.matches('^20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$');
     }
+    // A date not after today in Riyadh (UTC+3, no daylight saving).
+    function notFuture(v) {
+      return timestamp.date(int(v[0:4]), int(v[5:7]), int(v[8:10])) <= request.time + duration.value(3, 'h');
+    }
     function hasText(v, max) { return shortText(v, max) && v.trim().size() > 0; }
     function shortText(v, max) { return v is string && v.size() <= max; }
     function stamped(d) { return d.createdBy == request.auth.uid && d.createdAt == request.time; }
@@ -315,11 +319,13 @@ service cloud.firestore {
     // ---------- voucher counter ---------------------------------------------
     // No gaps in voucher numbers (owner decision 2026-10-07): the counter moves
     // only together with the NEW payment entry that takes the number.
-    match /counters/vouchers {
+    // Balance confirmations (إقرار مطابقة) have their own sequence, same rule.
+    match /counters/{name} {
       function taker() {
         return /databases/$(database)/documents/accounts/$(request.resource.data.lastAccount)/entries/$(request.resource.data.lastEntry);
       }
-      allow get: if isActive();
+      function numberField() { return name == 'vouchers' ? 'voucherNo' : 'confirmNo'; }
+      allow get: if isActive() && name in ['vouchers', 'confirmations'];
       allow update: if changed().hasOnly(['next', 'lastAccount', 'lastEntry'])
         && request.resource.data.next == resource.data.next + 1
         && request.resource.data.lastAccount is string
@@ -327,9 +333,21 @@ service cloud.firestore {
         && request.resource.data.lastEntry is string
         && request.resource.data.lastEntry.matches('^[A-Za-z0-9_-]{1,64}$')
         && !exists(taker())
-        && getAfter(taker()).data.voucherNo == request.resource.data.next
+        && name in ['vouchers', 'confirmations']
+        && getAfter(taker()).data.get(numberField(), null) == request.resource.data.next
         && isActive();
-      allow create, delete: if false;
+      // The first balance confirmation ever starts its counter at 1.
+      allow create: if name == 'confirmations'
+        && request.resource.data.keys().hasOnly(['next', 'lastAccount', 'lastEntry'])
+        && request.resource.data.next == 1
+        && request.resource.data.lastAccount is string
+        && request.resource.data.lastAccount.matches('^[A-Za-z0-9_-]{1,64}$')
+        && request.resource.data.lastEntry is string
+        && request.resource.data.lastEntry.matches('^[A-Za-z0-9_-]{1,64}$')
+        && !exists(taker())
+        && getAfter(taker()).data.get('confirmNo', null) == 1
+        && isActive();
+      allow delete: if false;
     }
 
     // ---------- audit log (append-only) -------------------------------------
@@ -345,7 +363,9 @@ service cloud.firestore {
           : /databases/$(database)/documents/accounts/$(seg()[1])/entries/$(seg()[3]);
       }
       function beforeIsReal() {
-        return request.resource.data.action in ['archive', 'unarchive']
+        return request.resource.data.action == 'create'
+          ? request.resource.data.before.size() == 0 && !exists(target())
+          : request.resource.data.action in ['archive', 'unarchive']
           ? request.resource.data.before.keys().hasOnly(['archived'])
             && request.resource.data.before.archived == get(target()).data.get('archived', false)
           : request.resource.data.before == get(target()).data;
@@ -354,11 +374,11 @@ service cloud.firestore {
       allow create: if request.resource.data.keys().hasOnly(['actor', 'action', 'path', 'before', 'at'])
         && request.resource.data.actor == request.auth.uid
         && request.resource.data.at == request.time
-        && request.resource.data.action in ['update', 'delete', 'restore', 'archive', 'unarchive']
+        && request.resource.data.action in ['create', 'update', 'delete', 'restore', 'archive', 'unarchive']
         && request.resource.data.path is string
         && request.resource.data.path.matches('^accounts/[A-Za-z0-9_-]{1,64}(/entries/[A-Za-z0-9_-]{1,64})?$')
         && (request.resource.data.action in ['archive', 'unarchive'] ? seg().size() == 2
-            : request.resource.data.action == 'update' ? seg().size() == 4 : true)
+            : request.resource.data.action in ['update', 'create'] ? seg().size() == 4 : true)
         && request.resource.data.before is map
         && getAfter(target()).data.get('auditId', '') == id
         && beforeIsReal();
@@ -377,8 +397,11 @@ service cloud.firestore {
       function entryPath(d) { return 'accounts/' + d.accountId + '/entries/' + d.entryId; }
       function validNotification(d) {
         return d.keys().hasOnly(['kind', 'accountId', 'entryId', 'accountName', 'title', 'changes',
-                                 'actor', 'actorName', 'at', 'readBy'])
-          && d.kind in ['signedEdit', 'invoiceEdit', 'delete', 'restore', 'accountDelete', 'accountRestore']
+                                 'actor', 'actorName', 'at', 'readBy', 'confirmDate'])
+          && d.kind in ['signedEdit', 'invoiceEdit', 'delete', 'restore', 'accountDelete', 'accountRestore',
+                        'confirmBreak']
+          // confirmBreak = a change before a signed balance confirmation's date.
+          && (d.kind != 'confirmBreak' || 'confirmDate' in d)
           && d.accountId is string && d.accountId.size() <= 64
           && d.entryId is string && d.entryId.size() <= 64
           && shortText(d.accountName, 120)
@@ -403,14 +426,19 @@ service cloud.firestore {
               && auditAfter().action == (request.resource.data.kind == 'accountDelete' ? 'delete' : 'restore')
               && getAfter(acctP(request.resource.data)).data.auditId == id
             : auditAfter().path == entryPath(request.resource.data)
-              && auditAfter().action == (request.resource.data.kind in ['signedEdit', 'invoiceEdit']
-                                         ? 'update' : request.resource.data.kind)
+              && (request.resource.data.kind == 'confirmBreak'
+                  ? auditAfter().action in ['create', 'update']
+                  : auditAfter().action == (request.resource.data.kind in ['signedEdit', 'invoiceEdit']
+                                            ? 'update' : request.resource.data.kind))
               && (request.resource.data.kind != 'signedEdit'
                   || 'signature' in get(entryP(request.resource.data)).data)
               && (request.resource.data.kind != 'invoiceEdit'
                   || get(entryP(request.resource.data)).data.type == 'invoice')
               && getAfter(entryP(request.resource.data)).data.auditId == id)
-        && request.resource.data.accountName == get(acctP(request.resource.data)).data.name;
+        && request.resource.data.accountName == get(acctP(request.resource.data)).data.name
+        && (!('confirmDate' in request.resource.data)
+            || request.resource.data.confirmDate
+               == get(acctP(request.resource.data)).data.get('confirmedThrough', ''));
       // Mark as read: add only yourself.
       allow update: if changed().hasOnly(['readBy'])
         && isManager()
@@ -431,7 +459,7 @@ service cloud.firestore {
         return d.keys().hasOnly(['name', 'phone', 'group', 'logo', 'deleted',
                                  'archived', 'archivedAt', 'archivedBy', 'auditId', 'deletedAt',
                                  'balance', 'entryCount', 'lastDate', 'totalsEntry', 'totalsAt',
-                                 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'legacyId'])
+                                 'confirmedThrough', 'confirmedEntry', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'legacyId'])
           && d.get('archived', false) is bool
           && hasText(d.name, 120)
           && d.phone is string && (d.phone == '' || d.phone.matches('^05[0-9]{8}$'))
@@ -454,6 +482,8 @@ service cloud.firestore {
         && request.resource.data.lastDate == ''
         && !('totalsEntry' in request.resource.data)
         && !('totalsAt' in request.resource.data)
+        && !('confirmedThrough' in request.resource.data)
+        && !('confirmedEntry' in request.resource.data)
         && stamped(request.resource.data);
       allow update: if isManager()
         && validAccount(request.resource.data)
@@ -463,6 +493,8 @@ service cloud.firestore {
         && request.resource.data.get('totalsEntry', null) == resource.data.get('totalsEntry', null)
         && request.resource.data.get('totalsAt', null) == resource.data.get('totalsAt', null)
         && request.resource.data.get('deletedAt', null) == resource.data.get('deletedAt', null)
+        && request.resource.data.get('confirmedThrough', null) == resource.data.get('confirmedThrough', null)
+        && request.resource.data.get('confirmedEntry', null) == resource.data.get('confirmedEntry', null)
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.createdBy == resource.data.createdBy
         && request.resource.data.deleted == resource.data.deleted
@@ -520,6 +552,21 @@ service cloud.firestore {
         && request.resource.data.totalsEntry.matches('^[A-Za-z0-9_-]{1,64}$')
         && totalsMath(request.resource.data)
         && canAccess(accountId);
+      // Latest date covered by a signed balance confirmation: raised (never
+      // lowered from the app) in the same write that attaches its signature.
+      // Changes before it must notify the managers (see the entry rules); the
+      // nightly job lowers it again if that confirmation went to the trash.
+      function ce() { return request.resource.data.confirmedEntry; }
+      allow update: if changed().hasOnly(['confirmedThrough', 'confirmedEntry'])
+        && ce() is string && ce().matches('^[A-Za-z0-9_-]{1,64}$')
+        && getAfter(entryAt(ce())).data.type == 'confirm'
+        && getAfter(entryAt(ce())).data.deleted == false
+        && 'signature' in getAfter(entryAt(ce())).data
+        && !('signature' in get(entryAt(ce())).data)
+        && request.resource.data.confirmedThrough
+           == (getAfter(entryAt(ce())).data.date > resource.data.get('confirmedThrough', '')
+               ? getAfter(entryAt(ce())).data.date : resource.data.get('confirmedThrough', ''))
+        && canAccess(accountId);
       allow delete: if false;
 
       // ---------- entries ----------------------------------------------------
@@ -527,11 +574,11 @@ service cloud.firestore {
         function validEntry(d) {
           return d.keys().hasOnly(['type', 'subtype', 'amount', 'signed', 'date', 'details',
                                    'attachments', 'voucherNo', 'signLinkId', 'signature', 'deleted',
-                                   'deletedAt', 'auditId', 'legacyId',
+                                   'deletedAt', 'auditId', 'legacyId', 'confirmNo', 'confirmBalance',
                                    'createdAt', 'createdBy', 'updatedAt', 'updatedBy'])
-            && d.type in ['invoice', 'payment', 'note']
+            && d.type in ['invoice', 'payment', 'note', 'confirm']
             && d.amount is int && d.amount >= 0 && d.amount <= 100000000000
-            && ((d.type == 'note' && d.amount == 0 && d.signed == 0)
+            && ((d.type in ['note', 'confirm'] && d.amount == 0 && d.signed == 0)
                 || (d.type == 'invoice' && d.amount > 0 && d.signed == d.amount)
                 || (d.type == 'payment' && d.amount > 0 && d.signed == -d.amount))
             && isDate(d.date)
@@ -542,7 +589,20 @@ service cloud.firestore {
             && (!('legacyId' in d) || d.legacyId is int)
             // A payment may be marked as a return (مرتجع) or a discount (خصم).
             && (!('subtype' in d) || (d.type == 'payment' && d.subtype in ['return', 'discount']))
+            // A balance confirmation states the balance up to its date (never in
+            // the future); it does not move the balance itself.
+            && (d.type == 'confirm'
+                ? d.confirmNo is int && d.confirmBalance is int
+                  && d.confirmBalance >= -100000000000 && d.confirmBalance <= 100000000000
+                  && notFuture(d.date)
+                : !('confirmNo' in d) && !('confirmBalance' in d))
             && d.deleted is bool;
+        }
+        function confirmAllocated(d) {
+          return d.confirmNo == getAfter(/databases/$(database)/documents/counters/confirmations).data.next
+            && getAfter(/databases/$(database)/documents/counters/confirmations).data.next
+               == (exists(/databases/$(database)/documents/counters/confirmations)
+                   ? get(/databases/$(database)/documents/counters/confirmations).data.next : 0) + 1;
         }
         function voucherAllocated(d) {
           // Payment vouchers take the next number from the shared counter, in
@@ -564,7 +624,10 @@ service cloud.firestore {
             && d.signature.signedAt == get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.signedAt
             // …and only if the recipient signed for exactly this amount/voucher.
             && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.amount == d.amount
-            && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.voucherNo == d.get('voucherNo', null)
+            && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.get('voucherNo', null) == d.get('voucherNo', null)
+            && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.get('confirmNo', null) == d.get('confirmNo', null)
+            && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.get('confirmBalance', null) == d.get('confirmBalance', null)
+            && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.date == d.date
             // …and the link was issued after the entry's last change (an edit
             // after signing voids the signature; the old link cannot bring it back).
             && get(/databases/$(database)/documents/signLinks/$(d.signLinkId)).data.createdAt
@@ -574,6 +637,7 @@ service cloud.firestore {
           return request.resource.data.type == resource.data.type
             && request.resource.data.get('subtype', null) == resource.data.get('subtype', null)
             && request.resource.data.get('voucherNo', null) == resource.data.get('voucherNo', null)
+            && request.resource.data.get('confirmNo', null) == resource.data.get('confirmNo', null)
             && request.resource.data.createdAt == resource.data.createdAt
             && request.resource.data.createdBy == resource.data.createdBy
             && request.resource.data.get('legacyId', null) == resource.data.get('legacyId', null);
@@ -586,6 +650,19 @@ service cloud.firestore {
           return !('balance' in get(acct()).data)
             || (getAfter(acct()).data.totalsAt == request.time
                 && getAfter(acct()).data.totalsEntry == entryId);
+        }
+        // Signed balance confirmations: a change that can move the balance on or
+        // before the latest confirmed date must notify the managers, with that
+        // date on the notification (owner decision 2026-10-09).
+        function ct() { return get(acct()).data.get('confirmedThrough', ''); }
+        function confirmNoted() {
+          return notified()
+            && getAfter(/databases/$(database)/documents/notifications/$(request.resource.data.auditId)).data.get('confirmDate', '') == ct();
+        }
+        function movesConfirmed(o, n) {
+          return (o.signed != 0 || n.signed != 0)
+            && (o.signed != n.signed || o.date != n.date)
+            && (o.date <= ct() || n.date <= ct());
         }
         function trashFlip() {
           return changed().hasOnly(['deleted', 'deletedAt', 'auditId', 'updatedAt', 'updatedBy'])
@@ -603,10 +680,18 @@ service cloud.firestore {
           && !('signLinkId' in request.resource.data)
           && !('legacyId' in request.resource.data)
           && !('deletedAt' in request.resource.data)
-          && !('auditId' in request.resource.data)
           && stamped(request.resource.data)
           && (request.resource.data.type != 'payment' || voucherAllocated(request.resource.data))
           && (request.resource.data.type == 'payment' || !('voucherNo' in request.resource.data))
+          && (request.resource.data.type != 'confirm' || confirmAllocated(request.resource.data))
+          && (request.resource.data.signed != 0 && request.resource.data.date <= ct()
+              ? request.resource.data.auditId is string
+                && !exists(/databases/$(database)/documents/auditLog/$(request.resource.data.auditId))
+                && getAfter(/databases/$(database)/documents/auditLog/$(request.resource.data.auditId)).data.action == 'create'
+                && getAfter(/databases/$(database)/documents/auditLog/$(request.resource.data.auditId)).data.actor == request.auth.uid
+                && getAfter(/databases/$(database)/documents/auditLog/$(request.resource.data.auditId)).data.path == entryPath()
+                && confirmNoted()
+              : !('auditId' in request.resource.data))
           && totalsMoved();
 
         // Edit. Editing a signed voucher removes its signature (and link id):
@@ -628,6 +713,7 @@ service cloud.firestore {
           && touched(request.resource.data)
           && audited(entryPath())
           && ((!('signature' in resource.data) && resource.data.type != 'invoice') || notified())
+          && (!movesConfirmed(resource.data, request.resource.data) || confirmNoted())
           && totalsMoved();
 
         // Move to the trash (signed vouchers too): nothing else changes, so a
@@ -637,6 +723,7 @@ service cloud.firestore {
           && request.resource.data.deletedAt == request.time
           && canAccess(accountId)
           && trashFlip()
+          && (resource.data.signed == 0 || resource.data.date > ct() || confirmNoted())
           && totalsMoved();
 
         // Restore from the trash: owner and managers only.
@@ -645,16 +732,20 @@ service cloud.firestore {
           && !('deletedAt' in request.resource.data)
           && isManager()
           && trashFlip()
+          && (resource.data.signed == 0 || resource.data.date > ct() || confirmNoted())
           && totalsMoved();
 
         // Attach the recipient's signature (copied from the signed link).
-        allow update: if resource.data.type == 'payment'
+        // A balance confirmation also raises the account's confirmed date.
+        allow update: if resource.data.type in ['payment', 'confirm']
           && resource.data.deleted == false
           && !('signature' in resource.data)
           && changed().hasOnly(['signLinkId', 'signature', 'updatedAt', 'updatedBy'])
           && canAccess(accountId)
           && signatureFromLink(request.resource.data)
-          && touched(request.resource.data);
+          && touched(request.resource.data)
+          && (resource.data.type == 'payment'
+              || getAfter(acct()).data.get('confirmedThrough', '') >= resource.data.date);
 
         allow delete: if false;
       }
@@ -706,17 +797,20 @@ service cloud.firestore {
         && canAccess(request.resource.data.accountId)
         && request.resource.data.keys().hasOnly(['accountId', 'entryId', 'accountName', 'accountPhone', 'logo',
                                                  'payerName', 'amount', 'amountWords', 'date', 'details',
-                                                 'voucherNo', 'ttlMinutes', 'status', 'synced',
+                                                 'voucherNo', 'confirmNo', 'confirmBalance',
+                                                 'ttlMinutes', 'status', 'synced',
                                                  'createdAt', 'createdBy'])
         && request.resource.data.status == 'pending'
         && request.resource.data.synced == false
         && request.resource.data.ttlMinutes == settings().linkMinutes
-        && entryAt(request.resource.data).type == 'payment'
+        && entryAt(request.resource.data).type in ['payment', 'confirm']
         && entryAt(request.resource.data).deleted == false
         && !('subtype' in entryAt(request.resource.data))
         && !('signature' in entryAt(request.resource.data))
         && entryAt(request.resource.data).amount == request.resource.data.amount
-        && entryAt(request.resource.data).voucherNo == request.resource.data.voucherNo
+        && entryAt(request.resource.data).get('voucherNo', null) == request.resource.data.get('voucherNo', null)
+        && entryAt(request.resource.data).get('confirmNo', null) == request.resource.data.get('confirmNo', null)
+        && entryAt(request.resource.data).get('confirmBalance', null) == request.resource.data.get('confirmBalance', null)
         && request.resource.data.date == entryAt(request.resource.data).date
         && request.resource.data.details == entryAt(request.resource.data).details
         && request.resource.data.payerName == settings().payerName

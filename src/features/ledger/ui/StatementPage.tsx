@@ -24,7 +24,8 @@ import { GROUP_LABEL } from '../../accounts/domain/types';
 import { can } from '../../users/domain/types';
 import type { EntrySnapshot } from '../data/entriesRepo';
 import { accountBalance, buildStatement, fullRange } from '../domain/statement';
-import { entryLabel, isCashPayment, SUBTYPE_LABEL, type Entry } from '../domain/types';
+import { entryLabel, isSignable, SUBTYPE_LABEL, type Entry } from '../domain/types';
+import { confirmLabel, confirmStatus } from '../../confirmations/domain/confirmation';
 import { downloadStatementXlsx } from '../export/statementSheet';
 import { EntrySheet } from './EntrySheet';
 import { signStateOf } from './signState';
@@ -80,7 +81,7 @@ export function StatementPage() {
   // Owner decision: only vouchers recorded in this app are marked (migrated
   // ones were settled in the old app).
   const unsigned = (e: Entry) =>
-    isCashPayment(e) && !e.legacy && signStateOf(e, ledger.links, now).kind !== 'signed';
+    isSignable(e) && !e.legacy && signStateOf(e, ledger.links, now).kind !== 'signed';
   const unsignedCount = statement.rows.filter((r) => unsigned(r.entry)).length;
   const shown = statement.rows.filter((r) =>
     filter === 'all' ? true : filter === 'unsigned' ? unsigned(r.entry) : r.entry.type === filter,
@@ -153,17 +154,48 @@ export function StatementPage() {
 
   /** Approved design «ب»: a small stamp beside the voucher number. */
   const stamp = (e: Entry) => {
-    if (!isCashPayment(e) || e.legacy) return null;
-    return signStateOf(e, ledger.links, now).kind === 'signed' ? (
-      <span className="stamp stamp-ok">موقّع</span>
-    ) : (
-      <span className="stamp stamp-no">بلا توقيع</span>
+    if (!isSignable(e) || e.legacy) return null;
+    const signedStamp =
+      signStateOf(e, ledger.links, now).kind === 'signed' ? (
+        <span className="stamp stamp-ok">موقّع</span>
+      ) : (
+        <span className="stamp stamp-no">بلا توقيع</span>
+      );
+    if (e.type !== 'confirm') return signedStamp;
+    const st = confirmStatus(e.confirmBalance ?? 0, e.date, entries);
+    return (
+      <>
+        <span className="stamp stamp-conf">إقرار {confirmLabel(e.confirmNo ?? 0)}</span>
+        {signedStamp}
+        {st.changed && (
+          <span
+            className="stamp stamp-warn"
+            title={`المُقرّ به ${formatAmount(e.confirmBalance ?? 0)} · الآن ${formatAmount(st.current)}`}
+          >
+            تغيّر الرصيد بعد المطابقة
+          </span>
+        )}
+      </>
+    );
+  };
+
+  /** «الرصيد المُقرّ به …» line under a confirmation. */
+  const confirmLine = (e: Entry) => {
+    if (e.type !== 'confirm') return null;
+    const b = e.confirmBalance ?? 0;
+    const st = confirmStatus(b, e.date, entries);
+    return (
+      <span className="num">
+        الرصيد المُقرّ به {formatAmount(Math.abs(b))} {SIDE_LABEL[balanceSide(b)]}
+        {st.changed &&
+          ` · الآن ${formatAmount(Math.abs(st.current))} ${SIDE_LABEL[balanceSide(st.current)]}`}
+      </span>
     );
   };
 
   const signCell = (e: Entry) => {
     const st = signStateOf(e, ledger.links, now);
-    if (!isCashPayment(e)) return null;
+    if (!isSignable(e)) return null;
     if (st.kind === 'signed') return null; // shown as the «موقّع» stamp
     if (st.kind === 'pending')
       return (
@@ -223,6 +255,21 @@ export function StatementPage() {
             >
               حذف الحساب
             </button>
+          )}
+          {!account.deleted && (
+            <Link
+              to={`/a/${id}/entry/new?type=confirm`}
+              className="btn-link"
+              style={{
+                fontSize: 14,
+                display: 'inline-flex',
+                alignItems: 'center',
+                color: 'var(--conf)',
+                fontWeight: 600,
+              }}
+            >
+              إقرار مطابقة
+            </Link>
           )}
           <button
             type="button"
@@ -464,6 +511,11 @@ export function StatementPage() {
                     )}
                     {stamp(e)}
                     {e.details || <span className="muted">{entryLabel(e)}</span>}
+                    {e.type === 'confirm' && (
+                      <div className="muted" style={{ fontSize: 13 }}>
+                        {confirmLine(e)}
+                      </div>
+                    )}
                     {e.attachments.length > 0 && (
                       <span className="muted" style={{ marginInlineStart: 6 }}>
                         <Icon name="clip" size={16} label="مرفقات" />
@@ -543,9 +595,14 @@ export function StatementPage() {
                     {stamp(e)}
                     {e.attachments.length > 0 && ` · 📎 ${e.attachments.length}`}
                   </div>
+                  {e.type === 'confirm' && (
+                    <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
+                      {confirmLine(e)}
+                    </div>
+                  )}
                 </div>
                 <div style={{ textAlign: 'left', flex: '0 0 auto' }}>
-                  {e.type !== 'note' && (
+                  {(e.type === 'invoice' || e.type === 'payment') && (
                     <div
                       className="num"
                       style={{
@@ -716,6 +773,11 @@ export function StatementPage() {
           balanceAfter={
             showBalances
               ? (statement.rows.find((r) => r.entry.id === selectedSnap.entry.id)?.balance ?? null)
+              : null
+          }
+          confirmNow={
+            selectedSnap.entry.type === 'confirm'
+              ? confirmStatus(0, selectedSnap.entry.date, entries).current
               : null
           }
           signState={signStateOf(selectedSnap.entry, ledger.links, now)}

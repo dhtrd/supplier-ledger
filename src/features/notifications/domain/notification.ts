@@ -4,7 +4,14 @@ import { entryLabel, type Entry } from '../../ledger/domain/types';
 
 /** notifications/{auditId} — what the owner and managers are told about. */
 export type NotificationKind =
-  'signedEdit' | 'invoiceEdit' | 'delete' | 'restore' | 'accountDelete' | 'accountRestore';
+  | 'signedEdit'
+  | 'invoiceEdit'
+  | 'delete'
+  | 'restore'
+  | 'accountDelete'
+  | 'accountRestore'
+  /** A change on or before a signed balance confirmation's date. */
+  | 'confirmBreak';
 
 export interface AppNotification {
   id: string;
@@ -20,6 +27,8 @@ export interface AppNotification {
   actorName: string;
   atMs: number;
   readBy: string[];
+  /** Set when the change touches a signed balance confirmation (its date). */
+  confirmDate: string | null;
 }
 
 export const KIND_LABEL: Record<NotificationKind, string> = {
@@ -29,7 +38,13 @@ export const KIND_LABEL: Record<NotificationKind, string> = {
   restore: 'استُرجعت من سلة المهملات',
   accountDelete: 'نُقل حساب إلى سلة المهملات',
   accountRestore: 'استُرجع حساب من سلة المهملات',
+  confirmBreak: 'تغيّر رصيد فترة عليها إقرار مطابقة موقّع',
 };
+
+/** Extra line shown when a change touches a signed balance confirmation. */
+export function confirmNote(confirmDate: string): string {
+  return `يمسّ رصيداً أقرّ به المورد/العميل حتى ${displayDate(confirmDate)}؛ راجع الإقرار وأرسل إقراراً جديداً عند الحاجة.`;
+}
 
 export const MAX_CHANGE_LINES = 8;
 const LINE_MAX = 200;
@@ -43,7 +58,10 @@ export function editKind(
   return null;
 }
 
-export function entryTitle(e: Pick<Entry, 'type' | 'subtype' | 'voucherNo'>): string {
+export function entryTitle(
+  e: Pick<Entry, 'type' | 'subtype' | 'voucherNo'> & { confirmNo?: number | null },
+): string {
+  if (e.type === 'confirm' && e.confirmNo != null) return `${entryLabel(e)} م-${e.confirmNo}`;
   return e.voucherNo != null ? `${entryLabel(e)} #${e.voucherNo}` : entryLabel(e);
 }
 
@@ -52,7 +70,12 @@ export interface EditableFields {
   date: string;
   details: string;
   attachments: number;
+  /** Balance confirmations only. */
+  confirmBalance?: number | null;
 }
+
+const balanceText = (b: number | null | undefined) =>
+  b == null ? '—' : `${formatAmount(Math.abs(b))}${b > 0 ? ' له' : b < 0 ? ' عليه' : ''}`;
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const detailsText = (s: string) => (s.trim() ? `«${clip(s.trim(), 60)}»` : '(فارغ)');
@@ -64,8 +87,12 @@ export function describeChanges(
   after: EditableFields,
 ): string[] {
   const out: string[] = [];
-  if (type !== 'note' && before.amount !== after.amount)
+  if ((type === 'invoice' || type === 'payment') && before.amount !== after.amount)
     out.push(`المبلغ: ${formatAmount(before.amount)} ← ${formatAmount(after.amount)}`);
+  if (type === 'confirm' && (before.confirmBalance ?? null) !== (after.confirmBalance ?? null))
+    out.push(
+      `الرصيد المُقرّ به: ${balanceText(before.confirmBalance)} ← ${balanceText(after.confirmBalance)}`,
+    );
   if (before.date !== after.date)
     out.push(`التاريخ: ${displayDate(before.date)} ← ${displayDate(after.date)}`);
   if (before.details.trim() !== after.details.trim())
@@ -76,9 +103,13 @@ export function describeChanges(
 }
 
 /** One-line summary of an entry for delete/restore notifications. */
-export function entrySummary(e: Pick<Entry, 'type' | 'amount' | 'date' | 'signature'>): string[] {
+export function entrySummary(
+  e: Pick<Entry, 'type' | 'amount' | 'date' | 'signature'> & { confirmBalance?: number | null },
+): string[] {
   const lines = [`التاريخ: ${displayDate(e.date)}`];
-  if (e.type !== 'note') lines.unshift(`المبلغ: ${formatAmount(e.amount)}`);
+  if (e.type === 'invoice' || e.type === 'payment')
+    lines.unshift(`المبلغ: ${formatAmount(e.amount)}`);
+  if (e.type === 'confirm') lines.unshift(`الرصيد المُقرّ به: ${balanceText(e.confirmBalance)}`);
   if (e.signature) lines.push(`موقّع من: ${clip(e.signature.name, 80)}`);
   return lines;
 }

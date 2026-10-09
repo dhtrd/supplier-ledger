@@ -6,6 +6,7 @@ import {
   getDocs,
   onSnapshot,
   query,
+  runTransaction,
   serverTimestamp,
   updateDoc,
   where,
@@ -35,6 +36,9 @@ export interface SignLink {
   date: string;
   details: string;
   voucherNo: number;
+  /** Balance confirmation links: «م-N» and the balance they state (else null). */
+  confirmNo: number | null;
+  confirmBalance: number | null;
   ttlMinutes: number;
   status: LinkStatus;
   synced: boolean;
@@ -64,6 +68,8 @@ export function toLink(s: DocumentSnapshot): SignLink {
     date: str(d.date),
     details: str(d.details),
     voucherNo: int(d.voucherNo),
+    confirmNo: typeof d.confirmNo === 'number' ? d.confirmNo : null,
+    confirmBalance: typeof d.confirmBalance === 'number' ? d.confirmBalance : null,
     ttlMinutes: int(d.ttlMinutes, 60),
     status: st === 'signed' || st === 'revoked' ? st : 'pending',
     synced: d.synced === true,
@@ -85,8 +91,8 @@ export function linkUrl(token: string, base: string): string {
 }
 
 /**
- * Creates a fresh signing link for an unsigned payment and revokes any older
- * pending links of that entry in the same batch.
+ * Creates a fresh signing link for an unsigned payment or balance confirmation
+ * and revokes any older pending links of that entry in the same batch.
  */
 export async function createSignLink(
   db: Firestore,
@@ -112,10 +118,15 @@ export async function createSignLink(
     logo: account.logo ? Bytes.fromUint8Array(account.logo) : null,
     payerName: args.payerName,
     amount: entry.amount,
-    amountWords: amountInWords(entry.amount),
     date: entry.date,
     details: entry.details,
-    voucherNo: entry.voucherNo,
+    ...(entry.type === 'confirm'
+      ? {
+          amountWords: amountInWords(Math.abs(entry.confirmBalance ?? 0)),
+          confirmNo: entry.confirmNo,
+          confirmBalance: entry.confirmBalance ?? 0,
+        }
+      : { amountWords: amountInWords(entry.amount), voucherNo: entry.voucherNo }),
     ttlMinutes: args.ttlMinutes,
     status: 'pending',
     synced: false,
@@ -164,18 +175,38 @@ export function watchOpenLinks(
   };
 }
 
-/** Copies a recipient's signature onto the payment entry and marks the link synced. */
+/**
+ * Copies a recipient's signature onto the entry and marks the link synced. A
+ * signed balance confirmation also raises the account's «confirmed through»
+ * date in the same write (changes before it then notify the managers).
+ */
 export async function syncSignedLink(db: Firestore, uid: string, link: SignLink): Promise<void> {
   if (link.status !== 'signed' || !link.signedAtRaw) return;
-  const batch = writeBatch(db);
-  batch.update(doc(db, 'accounts', link.accountId, 'entries', link.entryId), {
+  const entryRef = doc(db, 'accounts', link.accountId, 'entries', link.entryId);
+  const signature = {
     signLinkId: link.id,
     signature: { name: link.signerName, image: link.signatureImage, signedAt: link.signedAtRaw },
     updatedAt: serverTimestamp(),
     updatedBy: uid,
+  };
+  if (link.confirmNo === null) {
+    const batch = writeBatch(db);
+    batch.update(entryRef, signature);
+    batch.update(doc(db, 'signLinks', link.id), { synced: true });
+    await batch.commit();
+    return;
+  }
+  const accountRef = doc(db, 'accounts', link.accountId);
+  await runTransaction(db, async (tx) => {
+    const a = await tx.get(accountRef);
+    const through = str(a.data()?.confirmedThrough);
+    tx.update(entryRef, signature);
+    tx.update(doc(db, 'signLinks', link.id), { synced: true });
+    tx.update(accountRef, {
+      confirmedThrough: link.date > through ? link.date : through,
+      confirmedEntry: link.entryId,
+    });
   });
-  batch.update(doc(db, 'signLinks', link.id), { synced: true });
-  await batch.commit();
 }
 
 /** Ids of pending links issued for one entry (to revoke them when it changes). */

@@ -153,6 +153,13 @@ runMain(async () => {
         console.log(
           `::warning::${t.corrected.length} account totals were wrong and were corrected`,
         );
+      // Balance confirmations whose period changed after they were made
+      // (expected after a notified edit; shown on the confirmation in the app).
+      if (t.confirmChanged)
+        console.log(
+          `::notice::${t.confirmChanged} balance confirmations no longer match their period balance`,
+        );
+      totalsNote += `, confirmations ${t.confirmChanged} changed / ${t.confirmedFixed} dates reset`;
     }
 
     // ---- 4. status ---------------------------------------------------------

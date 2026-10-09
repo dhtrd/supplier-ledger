@@ -28,6 +28,7 @@ import {
 import { int, millis, str, strList } from '../../../shared/lib/firestore';
 import type { Entry, EntryType, Signature } from '../domain/types';
 import { addNotification } from '../../notifications/data/notificationsRepo';
+import { movesConfirmed } from '../../confirmations/domain/confirmation';
 import {
   describeChanges,
   editKind,
@@ -35,7 +36,7 @@ import {
   entryTitle,
 } from '../../notifications/domain/notification';
 
-const TYPES: EntryType[] = ['invoice', 'payment', 'note'];
+const TYPES: EntryType[] = ['invoice', 'payment', 'note', 'confirm'];
 
 export interface EntrySnapshot {
   entry: Entry;
@@ -70,6 +71,8 @@ export function toEntry(s: DocumentSnapshot): EntrySnapshot {
       createdBy: str(raw.createdBy),
       legacy: typeof raw.legacyId === 'number',
       subtype: raw.subtype === 'return' || raw.subtype === 'discount' ? raw.subtype : null,
+      confirmNo: typeof raw.confirmNo === 'number' ? raw.confirmNo : null,
+      confirmBalance: typeof raw.confirmBalance === 'number' ? raw.confirmBalance : null,
     },
   };
 }
@@ -142,11 +145,26 @@ export interface NewEntry {
   signed: number;
   date: string;
   details: string;
+  /** Balance confirmations only: the balance up to `date` they state. */
+  confirmBalance?: number;
 }
 
+/** Which counter numbers an entry type: payments «#N», confirmations «م-N». */
+const COUNTER: Partial<Record<EntryType, { id: string; field: string; missing: string | null }>> = {
+  payment: {
+    id: 'vouchers',
+    field: 'voucherNo',
+    missing: 'عدّاد السندات غير مهيأ. شغّل سكربت إنشاء المالك أولاً.',
+  },
+  // The first confirmation ever creates its counter (allowed by the rules).
+  confirm: { id: 'confirmations', field: 'confirmNo', missing: null },
+};
+
 /**
- * Creates an entry with its images in one atomic write. Payments take the
- * next voucher number from counters/vouchers inside a transaction.
+ * Creates an entry with its images in one atomic write. Payments and balance
+ * confirmations take the next number of their own counter in a transaction.
+ * An entry dated on or before a signed confirmation is audited and notifies
+ * the managers (`ctx` names the actor and account in that notification).
  */
 export async function createEntry(
   db: Firestore,
@@ -154,7 +172,8 @@ export async function createEntry(
   accountId: string,
   input: NewEntry,
   files: PreparedImage[],
-): Promise<{ id: string; voucherNo: number | null }> {
+  ctx?: ChangeContext,
+): Promise<{ id: string; voucherNo: number | null; confirmNo: number | null }> {
   const ref = doc(entriesCol(db, accountId));
   const base = {
     type: input.type,
@@ -162,32 +181,68 @@ export async function createEntry(
     signed: input.signed,
     date: input.date,
     details: input.details,
+    ...(input.type === 'confirm' ? { confirmBalance: input.confirmBalance ?? 0 } : {}),
     deleted: false,
     createdAt: serverTimestamp(),
     createdBy: uid,
   };
-  const counter = doc(db, 'counters', 'vouchers');
-  const voucherNo = await runTransaction(db, async (tx) => {
+  const numbering = COUNTER[input.type];
+  const next = await runTransaction(db, async (tx) => {
     // Reads first (transaction rule), then writes.
-    const totals = await readAccountTotals(tx, db, accountId);
+    const { totals, confirmedThrough } = await readAccountState(tx, db, accountId);
     let next: number | null = null;
-    if (input.type === 'payment') {
+    if (numbering) {
+      const counter = doc(db, 'counters', numbering.id);
       const c = await tx.get(counter);
-      if (!c.exists()) throw new AppError('عدّاد السندات غير مهيأ. شغّل سكربت إنشاء المالك أولاً.');
-      next = int(c.data().next) + 1;
+      if (!c.exists() && numbering.missing) throw new AppError(numbering.missing);
+      next = (c.exists() ? int(c.data().next) : 0) + 1;
       // The rules let the counter move only with the entry that takes the number.
-      tx.update(counter, { next, lastAccount: accountId, lastEntry: ref.id });
+      const moved = { next, lastAccount: accountId, lastEntry: ref.id };
+      if (c.exists()) tx.update(counter, moved);
+      else tx.set(counter, moved);
+    }
+    const after = { signed: input.signed, date: input.date };
+    let auditId: string | null = null;
+    if (movesConfirmed(null, after, confirmedThrough)) {
+      if (!ctx) throw new AppError('تعذّر الحفظ: بيانات التنبيه ناقصة. أعد فتح الصفحة.');
+      const audit = doc(collection(db, 'auditLog'));
+      auditId = audit.id;
+      tx.set(audit, auditRecord(uid, 'create', ref.path, {}));
+      const shown = {
+        type: input.type,
+        subtype: null,
+        amount: input.amount,
+        date: input.date,
+        signature: null,
+        voucherNo: input.type === 'payment' ? next : null,
+      };
+      addNotification(tx, db, audit.id, {
+        kind: 'confirmBreak',
+        accountId,
+        entryId: ref.id,
+        accountName: ctx.accountName,
+        title: entryTitle(shown),
+        changes: ['عملية جديدة', ...entrySummary(shown)],
+        actor: uid,
+        actorName: ctx.actorName,
+        confirmDate: confirmedThrough,
+      });
     }
     const attachments = writeAttachments(tx, db, uid, accountId, ref.id, files);
-    tx.set(ref, { ...base, attachments, ...(next !== null ? { voucherNo: next } : {}) });
-    moveTotals(tx, db, accountId, ref.id, totals, null, {
-      deleted: false,
-      signed: input.signed,
-      date: input.date,
+    tx.set(ref, {
+      ...base,
+      attachments,
+      ...(next !== null && numbering ? { [numbering.field]: next } : {}),
+      ...(auditId ? { auditId } : {}),
     });
+    moveTotals(tx, db, accountId, ref.id, totals, null, { deleted: false, ...after });
     return next;
   });
-  return { id: ref.id, voucherNo };
+  return {
+    id: ref.id,
+    voucherNo: input.type === 'payment' ? next : null,
+    confirmNo: input.type === 'confirm' ? next : null,
+  };
 }
 
 export interface EntryChanges {
@@ -197,9 +252,11 @@ export interface EntryChanges {
   details: string;
   /** Attachment ids that remain after the edit. */
   keepAttachments: string[];
+  /** Balance confirmations: the balance up to the (possibly new) date. */
+  confirmBalance?: number;
 }
 
-type AuditAction = 'update' | 'delete' | 'restore';
+type AuditAction = 'create' | 'update' | 'delete' | 'restore';
 
 const STALE =
   'تغيّرت هذه العملية منذ فتحتها (ربما عدّلها أو حذفها مستخدم آخر). ارجع للكشف وافتحها من جديد.';
@@ -210,14 +267,18 @@ function stateOf(raw: Record<string, unknown>): EntryState {
   return { deleted: raw.deleted === true, signed: int(raw.signed), date: str(raw.date) };
 }
 
-/** The account's running totals inside a transaction (null = not initialised). */
-async function readAccountTotals(
+/**
+ * Inside a transaction: the account's running totals (null = not initialised)
+ * and the latest date covered by a signed balance confirmation ('' = none).
+ */
+async function readAccountState(
   tx: Transaction,
   db: Firestore,
   accountId: string,
-): Promise<RunningTotals | null> {
+): Promise<{ totals: RunningTotals | null; confirmedThrough: string }> {
   const a = await tx.get(accountDoc(db, accountId));
-  return a.exists() ? readTotals(a.data()) : null;
+  if (!a.exists()) return { totals: null, confirmedThrough: '' };
+  return { totals: readTotals(a.data()), confirmedThrough: str(a.data().confirmedThrough) };
 }
 
 /**
@@ -230,16 +291,20 @@ async function readForChange(
   db: Firestore,
   accountId: string,
   current: EntrySnapshot,
-): Promise<{ before: Record<string, unknown>; totals: RunningTotals | null }> {
-  const totals = await readAccountTotals(tx, db, accountId);
+): Promise<{
+  before: Record<string, unknown>;
+  totals: RunningTotals | null;
+  confirmedThrough: string;
+}> {
+  const { totals, confirmedThrough } = await readAccountState(tx, db, accountId);
   const s = await tx.get(doc(entriesCol(db, accountId), current.entry.id));
   if (!s.exists()) throw new AppError(STALE);
   const before = s.data();
   const same = (k: string) =>
     JSON.stringify(before[k] ?? null) === JSON.stringify(current.raw[k] ?? null);
-  if (!['auditId', 'deleted', 'signLinkId', 'amount', 'date'].every(same))
+  if (!['auditId', 'deleted', 'signLinkId', 'amount', 'date', 'confirmBalance'].every(same))
     throw new AppError(STALE);
-  return { before, totals };
+  return { before, totals, confirmedThrough };
 }
 
 /** Moves the account totals by one entry change (same transaction; rules check it). */
@@ -270,25 +335,25 @@ export interface ChangeContext {
   accountName: string;
 }
 
+const fieldsOf = (e: Entry) => ({
+  amount: e.amount,
+  date: e.date,
+  details: e.details,
+  attachments: e.attachments.length,
+  confirmBalance: e.confirmBalance,
+});
+
 /** True when saving these values would actually change the entry. */
 export function entryChanged(current: Entry, changes: EntryChanges, newFiles: number): boolean {
   return (
     newFiles > 0 ||
-    describeChanges(
-      current.type,
-      {
-        amount: current.amount,
-        date: current.date,
-        details: current.details,
-        attachments: current.attachments.length,
-      },
-      {
-        amount: changes.amount,
-        date: changes.date,
-        details: changes.details,
-        attachments: changes.keepAttachments.length,
-      },
-    ).length > 0
+    describeChanges(current.type, fieldsOf(current), {
+      amount: changes.amount,
+      date: changes.date,
+      details: changes.details,
+      attachments: changes.keepAttachments.length,
+      confirmBalance: changes.confirmBalance ?? null,
+    }).length > 0
   );
 }
 
@@ -312,12 +377,17 @@ export async function updateEntry(
   const ref = doc(entriesCol(db, accountId), e.id);
   const audit = doc(collection(db, 'auditLog'));
   await runTransaction(db, async (tx) => {
-    const { before, totals } = await readForChange(tx, db, accountId, current);
+    const { before, totals, confirmedThrough } = await readForChange(tx, db, accountId, current);
     tx.set(audit, auditRecord(uid, 'update', ref.path, before));
     // An open signing link must never outlive the amount it was issued for.
     for (const l of revokeLinkIds) tx.update(doc(db, 'signLinks', l), { status: 'revoked' });
     const added = writeAttachments(tx, db, uid, accountId, e.id, newFiles);
-    const kind = editKind(e);
+    const breaks = movesConfirmed(
+      stateOf(before),
+      { signed: changes.signed, date: changes.date },
+      confirmedThrough,
+    );
+    const kind = editKind(e) ?? (breaks ? 'confirmBreak' : null);
     if (kind)
       addNotification(tx, db, audit.id, {
         kind,
@@ -325,24 +395,23 @@ export async function updateEntry(
         entryId: e.id,
         accountName: ctx.accountName,
         title: entryTitle(e),
-        changes: describeChanges(
-          e.type,
-          { amount: e.amount, date: e.date, details: e.details, attachments: e.attachments.length },
-          {
-            amount: changes.amount,
-            date: changes.date,
-            details: changes.details,
-            attachments: changes.keepAttachments.length + added.length,
-          },
-        ),
+        changes: describeChanges(e.type, fieldsOf(e), {
+          amount: changes.amount,
+          date: changes.date,
+          details: changes.details,
+          attachments: changes.keepAttachments.length + added.length,
+          confirmBalance: changes.confirmBalance ?? null,
+        }),
         actor: uid,
         actorName: ctx.actorName,
+        ...(breaks ? { confirmDate: confirmedThrough } : {}),
       });
     tx.update(ref, {
       amount: changes.amount,
       signed: changes.signed,
       date: changes.date,
       details: changes.details,
+      ...(e.type === 'confirm' ? { confirmBalance: changes.confirmBalance ?? 0 } : {}),
       attachments: [...changes.keepAttachments, ...added],
       ...(e.signature ? { signature: deleteField(), signLinkId: deleteField() } : {}),
       auditId: audit.id,
@@ -369,7 +438,8 @@ export async function deleteEntry(
   const ref = doc(entriesCol(db, accountId), current.entry.id);
   const audit = doc(collection(db, 'auditLog'));
   await runTransaction(db, async (tx) => {
-    const { before, totals } = await readForChange(tx, db, accountId, current);
+    const { before, totals, confirmedThrough } = await readForChange(tx, db, accountId, current);
+    const breaks = movesConfirmed(stateOf(before), null, confirmedThrough);
     for (const l of revokeLinkIds) tx.update(doc(db, 'signLinks', l), { status: 'revoked' });
     tx.set(audit, auditRecord(uid, 'delete', ref.path, before));
     addNotification(tx, db, audit.id, {
@@ -381,6 +451,7 @@ export async function deleteEntry(
       changes: entrySummary(current.entry),
       actor: uid,
       actorName: ctx.actorName,
+      ...(breaks ? { confirmDate: confirmedThrough } : {}),
     });
     tx.update(ref, {
       deleted: true,
@@ -405,7 +476,8 @@ export async function restoreEntry(
   const ref = doc(entriesCol(db, accountId), current.entry.id);
   const audit = doc(collection(db, 'auditLog'));
   await runTransaction(db, async (tx) => {
-    const { before, totals } = await readForChange(tx, db, accountId, current);
+    const { before, totals, confirmedThrough } = await readForChange(tx, db, accountId, current);
+    const breaks = movesConfirmed(null, stateOf(before), confirmedThrough);
     tx.set(audit, auditRecord(uid, 'restore', ref.path, before));
     addNotification(tx, db, audit.id, {
       kind: 'restore',
@@ -416,6 +488,7 @@ export async function restoreEntry(
       changes: entrySummary(current.entry),
       actor: uid,
       actorName: ctx.actorName,
+      ...(breaks ? { confirmDate: confirmedThrough } : {}),
     });
     tx.update(ref, {
       deleted: false,

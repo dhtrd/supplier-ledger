@@ -34,6 +34,7 @@ import {
 import {
   ENTRY_LABEL,
   entryLabel,
+  hasAmount,
   MAX_ATTACHMENTS,
   MAX_DETAILS,
   daysAhead,
@@ -46,22 +47,31 @@ import { entryTitle } from '../../notifications/domain/notification';
 import { ConfirmGate } from '../../../shared/ui/ConfirmGate';
 import { can } from '../../users/domain/types';
 import { EntryContextPanel } from './EntryContextPanel';
+import { sharedWatch } from '../../../shared/lib/sharedWatch';
+import { watchEntries } from '../data/entriesRepo';
+import { amountInWords } from '../../../shared/lib/tafqit';
+import { balanceAt, confirmLabel, signerSide } from '../../confirmations/domain/confirmation';
 
 const TYPE_COLOR: Record<EntryType, string> = {
   invoice: 'var(--lah)',
   payment: 'var(--alayh)',
   note: 'var(--ink)',
+  confirm: 'var(--conf)',
 };
 const HINT: Record<EntryType, string> = {
   invoice: 'تظهر في عمود «له» وتزيد رصيد المورد.',
   payment: 'تظهر في عمود «عليه» وتأخذ رقم سند، ويمكن إرسالها للتوقيع بعد الحفظ.',
   note: 'ملاحظة بلا مبلغ، لا تغيّر الرصيد.',
+  confirm:
+    'إقرار مطابقة رصيد: يذكر رصيد الحساب حتى تاريخه (يُحسب تلقائياً) ولا يغيّر الرصيد، ويأخذ رقم «م-»، ويُرسل للمورد/العميل ليوقّعه.',
 };
 const SAVE_LABEL: Record<EntryType, string> = {
   invoice: 'حفظ الفاتورة',
   payment: 'حفظ الدفعة',
   note: 'حفظ الملاحظة',
+  confirm: 'حفظ الإقرار',
 };
+const TYPES = ['invoice', 'payment', 'note', 'confirm'] as const;
 
 export function EntryFormPage() {
   const { id = '', entryId } = useParams();
@@ -70,8 +80,7 @@ export function EntryFormPage() {
   const navigate = useNavigate();
   const toast = useToast();
   const isNew = !entryId;
-  const initialType =
-    (['invoice', 'payment', 'note'] as const).find((t) => t === params.get('type')) ?? 'invoice';
+  const initialType = TYPES.find((t) => t === params.get('type')) ?? 'invoice';
 
   const [account, setAccount] = useState<Account | null>(null);
   const accountName = account?.name ?? '';
@@ -115,7 +124,7 @@ export function EntryFormPage() {
           const e = snap.entry;
           setCurrent(snap);
           setType(e.type);
-          setAmountText(e.type === 'note' ? '' : formatAmount(e.amount).replace(/,/g, ''));
+          setAmountText(hasAmount(e.type) ? formatAmount(e.amount).replace(/,/g, '') : '');
           setDate(e.date);
           setDetails(e.details);
           setKeep(e.attachments);
@@ -129,6 +138,33 @@ export function EntryFormPage() {
   }, [id, entryId, profile.role]);
 
   const attachmentCount = keep.length + added.length;
+
+  // A balance confirmation states the balance up to its date: computed from the
+  // account's entries (the same shared listener as the statement).
+  const [ledger, setLedger] = useState<EntrySnapshot[] | null>(null);
+  const [ledgerError, setLedgerError] = useState('');
+  useEffect(() => {
+    if (type !== 'confirm') return;
+    return sharedWatch<EntrySnapshot[]>(
+      `entries:${id}`,
+      (n, f) => watchEntries(fb().db, id, n, f),
+      (rows) => {
+        setLedger(rows);
+        setLedgerError('');
+      },
+      (e) => {
+        reportError('confirm-balance', e);
+        setLedgerError(errorMessage(e));
+      },
+    );
+  }, [type, id]);
+  const confirmBalance =
+    type === 'confirm' && ledger
+      ? balanceAt(
+          ledger.map((s) => s.entry),
+          date,
+        )
+      : null;
 
   const addFiles = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -164,10 +200,10 @@ export function EntryFormPage() {
       keep.length !== current.entry.attachments.length ||
       date !== current.entry.date ||
       details !== current.entry.details ||
-      (type !== 'note' && parseAmount(amountText) !== current.entry.amount)
+      (hasAmount(type) && parseAmount(amountText) !== current.entry.amount)
     : !!amountText.trim() || !!details.trim() || added.length > 0;
 
-  const parsed = type === 'note' ? 0 : parseAmount(amountText);
+  const parsed = hasAmount(type) ? parseAmount(amountText) : 0;
   const nextSigned = parsed === null || parsed < 0 ? null : signedAmount(type, parsed);
 
   /** Clears the form for the next entry; type and date stay (batch entry from one paper). */
@@ -179,7 +215,7 @@ export function EntryFormPage() {
     setBusy(false);
     resetPickers();
     requestAnimationFrame(() =>
-      (type === 'note' ? document.getElementById('desc') : amountRef.current)?.focus(),
+      (hasAmount(type) ? amountRef.current : document.getElementById('desc'))?.focus(),
     );
   };
 
@@ -197,9 +233,14 @@ export function EntryFormPage() {
       details,
       attachmentCount,
       requireNoteText: !current || current.entry.details.trim() !== '',
+      today: todayRiyadh(),
     });
     if (!res.ok) {
       setErrors(res.errors as Record<string, string>);
+      return;
+    }
+    if (type === 'confirm' && confirmBalance === null) {
+      toast.error(ledgerError || 'انتظر حتى يُحسب الرصيد ثم احفظ.');
       return;
     }
     const todayIso = todayRiyadh();
@@ -221,6 +262,7 @@ export function EntryFormPage() {
           date: res.date,
           details: res.details,
           keepAttachments: keep,
+          ...(type === 'confirm' ? { confirmBalance: confirmBalance ?? 0 } : {}),
         };
         if (!entryChanged(current.entry, changes, added.length)) {
           toast.info('لا تغييرات؛ لم يُحفظ شيء.');
@@ -229,7 +271,9 @@ export function EntryFormPage() {
         }
         const wasSigned = current.entry.signature !== null;
         const revoke =
-          current.entry.type === 'payment' ? await pendingLinkIds(db, id, current.entry.id) : [];
+          current.entry.type === 'payment' || current.entry.type === 'confirm'
+            ? await pendingLinkIds(db, id, current.entry.id)
+            : [];
         await updateEntry(db, user.uid, id, current, changes, added, revoke, {
           actorName: profile.name,
           accountName,
@@ -244,9 +288,23 @@ export function EntryFormPage() {
           db,
           user.uid,
           id,
-          { type, amount: res.amount, signed: res.signed, date: res.date, details: res.details },
+          {
+            type,
+            amount: res.amount,
+            signed: res.signed,
+            date: res.date,
+            details: res.details,
+            ...(type === 'confirm' ? { confirmBalance: confirmBalance ?? 0 } : {}),
+          },
           added,
+          { actorName: profile.name, accountName },
         );
+        if (out.confirmNo !== null) {
+          toast.info(`حُفظ إقرار المطابقة ${confirmLabel(out.confirmNo)}. أرسله الآن للتوقيع.`);
+          // Opens it in the statement, where «إرسال للتوقيع» and printing are.
+          navigate(`/a/${id}?e=${out.id}`, { replace: true });
+          return;
+        }
         toast.info(
           out.voucherNo !== null
             ? `حُفظت الدفعة — سند رقم ${out.voucherNo}. اضغطها في الكشف لإرسالها للتوقيع أو طباعتها.`
@@ -370,6 +428,12 @@ export function EntryFormPage() {
                 #{current.entry.voucherNo}
               </span>
             )}
+            {current?.entry.confirmNo != null && (
+              <span className="muted num" style={{ fontSize: 16 }}>
+                {' '}
+                {confirmLabel(current.entry.confirmNo)}
+              </span>
+            )}
           </h1>
           <div className="muted" style={{ fontSize: 13 }}>
             {accountName}
@@ -386,7 +450,7 @@ export function EntryFormPage() {
               aria-label="نوع العملية"
               style={{ ['--seg-on' as string]: TYPE_COLOR[type] }}
             >
-              {(['invoice', 'payment', 'note'] as const).map((t) => (
+              {TYPES.map((t) => (
                 <button key={t} type="button" aria-pressed={type === t} onClick={() => setType(t)}>
                   {ENTRY_LABEL[t]}
                 </button>
@@ -398,7 +462,7 @@ export function EntryFormPage() {
           </div>
 
           <div className="amt-date">
-            {type !== 'note' && (
+            {hasAmount(type) && (
               <div className="field">
                 <label htmlFor="amt">المبلغ</label>
                 <div
@@ -478,8 +542,18 @@ export function EntryFormPage() {
             </div>
           </div>
 
+          {type === 'confirm' && (
+            <ConfirmBalanceBox balance={confirmBalance} date={date} error={ledgerError} />
+          )}
+
           <div className="field">
-            <label htmlFor="desc">{type === 'note' ? 'نص الملاحظة' : 'التفاصيل'}</label>
+            <label htmlFor="desc">
+              {type === 'note'
+                ? 'نص الملاحظة'
+                : type === 'confirm'
+                  ? 'البيان (اختياري)'
+                  : 'التفاصيل'}
+            </label>
             <textarea
               id="desc"
               className="input"
@@ -487,7 +561,13 @@ export function EntryFormPage() {
               maxLength={MAX_DETAILS}
               value={details}
               onChange={(e) => setDetails(e.target.value)}
-              placeholder={type === 'invoice' ? 'مثال: فاتورة رقم 0379' : ''}
+              placeholder={
+                type === 'invoice'
+                  ? 'مثال: فاتورة رقم 0379'
+                  : type === 'confirm'
+                    ? 'مثال: مطابقة الربع الثالث'
+                    : ''
+              }
               aria-invalid={!!errors.details}
             />
             <div className="row-between">
@@ -611,6 +691,41 @@ export function EntryFormPage() {
         />
       )}
     </form>
+  );
+}
+
+/** The balance a confirmation will state, computed live for the chosen date. */
+function ConfirmBalanceBox({
+  balance,
+  date,
+  error,
+}: {
+  balance: number | null;
+  date: string;
+  error: string;
+}) {
+  const side = balance === null ? null : signerSide(balance);
+  return (
+    <div className="confirm-box" role="status" aria-live="polite">
+      <div className="hint">الرصيد حتى نهاية {displayDate(date)} (يُحسب تلقائياً)</div>
+      {error ? (
+        <div className="error-text">تعذّر حساب الرصيد: {error}</div>
+      ) : balance === null ? (
+        <div className="hint">جارٍ الحساب…</div>
+      ) : (
+        <>
+          <strong className="num confirm-amount">
+            {formatAmount(Math.abs(balance))} <RiyalSign size={18} />{' '}
+            <span>{balance > 0 ? 'له' : balance < 0 ? 'عليه' : 'مُسوّى'}</span>
+          </strong>
+          <div className="hint">
+            {side
+              ? `${amountInWords(Math.abs(balance))} — يظهر في الإقرار «${side}» بلسان المورد/العميل.`
+              : 'الحساب مسدَّد في ذلك التاريخ.'}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

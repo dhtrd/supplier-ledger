@@ -24,6 +24,7 @@ const KINDS: NotificationKind[] = [
   'restore',
   'accountDelete',
   'accountRestore',
+  'confirmBreak',
 ];
 export const NOTIFICATIONS_SHOWN = 100;
 
@@ -36,6 +37,8 @@ export interface NewNotification {
   changes: string[];
   actor: string;
   actorName: string;
+  /** The account's confirmed-through date, when the change touches it. */
+  confirmDate?: string;
 }
 
 /** Adds the notification to the batch that makes the change (id = audit id). */
@@ -69,6 +72,7 @@ export function toNotification(s: DocumentSnapshot): AppNotification {
     actorName: str(d.actorName),
     atMs: millis(d.at),
     readBy: strList(d.readBy),
+    confirmDate: typeof d.confirmDate === 'string' && d.confirmDate ? d.confirmDate : null,
   };
 }
 

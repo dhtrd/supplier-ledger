@@ -19,6 +19,9 @@
   --alayh-ink: #7a2e1a;
   --warn: #8a5a00;
   --warn-bg: #f6ebd3;
+  /* Balance confirmations (إقرار مطابقة). */
+  --conf: #2d4f7c;
+  --conf-bg: #e2e9f3;
   --overlay: rgba(27, 42, 58, 0.45);
   --serif: 'Noto Naskh Arabic', serif;
   --sans: 'IBM Plex Sans Arabic', system-ui, sans-serif;
@@ -1032,6 +1035,19 @@ textarea.input {
   color: var(--lah);
   border: 1.5px solid var(--lah);
 }
+.stamp-conf {
+  color: var(--conf);
+  border: 1.5px solid var(--conf);
+  background: var(--conf-bg);
+  transform: none;
+}
+.stamp-warn {
+  color: var(--warn);
+  background: var(--warn-bg);
+  border: 1.5px solid var(--warn);
+  transform: none;
+  white-space: normal;
+}
 .pill-count {
   color: var(--alayh);
   font-weight: 700;
@@ -1360,4 +1376,22 @@ textarea.input {
   margin: 0;
   padding: 14px var(--gutter) 6px;
   font-size: 18px;
+}
+
+/* Balance confirmation: the stated balance on the entry form. */
+.confirm-box {
+  background: var(--conf-bg);
+  border: 1px solid var(--conf);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.confirm-amount {
+  font-size: 26px;
+  color: var(--ink);
+}
+.confirm-amount span {
+  font-size: 16px;
 }

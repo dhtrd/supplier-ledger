@@ -109,7 +109,12 @@ function Balance({ halalas, big = false }: { halalas: number; big?: boolean }) {
 }
 
 function RecentRow({ e, editing }: { e: Entry; editing: boolean }) {
-  const label = e.voucherNo != null ? `${entryLabel(e)} #${e.voucherNo}` : entryLabel(e);
+  const label =
+    e.voucherNo != null
+      ? `${entryLabel(e)} #${e.voucherNo}`
+      : e.confirmNo != null
+        ? `${entryLabel(e)} م-${e.confirmNo}`
+        : entryLabel(e);
   const text = e.details.trim() ? `${label} · ${e.details.trim()}` : label;
   return (
     <div className={`ctx-row${editing ? ' editing' : ''}`}>
@@ -117,7 +122,7 @@ function RecentRow({ e, editing }: { e: Entry; editing: boolean }) {
         <span className="num">{displayDate(e.date)}</span> · {text}
         {editing && <span className="hint"> (قيد التعديل)</span>}
       </span>
-      {e.type !== 'note' && (
+      {(e.type === 'invoice' || e.type === 'payment') && (
         <b className="num" style={{ color: e.type === 'invoice' ? 'var(--lah)' : 'var(--alayh)' }}>
           {formatAmount(e.amount)}
         </b>

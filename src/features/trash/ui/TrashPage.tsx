@@ -164,7 +164,8 @@ export function TrashPage() {
                     </span>
                     <span className="muted num" style={{ display: 'block', fontSize: 13 }}>
                       {displayDate(e.date)}
-                      {e.type !== 'note' && ` · ${formatAmount(e.amount)}`}
+                      {(e.type === 'invoice' || e.type === 'payment') &&
+                        ` · ${formatAmount(e.amount)}`}
                       {e.details && ` · ${e.details.slice(0, 60)}`}
                       {e.signature && ` · موقّع من ${e.signature.name}`}
                     </span>

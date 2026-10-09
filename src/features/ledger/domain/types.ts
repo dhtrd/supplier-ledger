@@ -3,7 +3,7 @@ import { isIsoDate } from '../../../shared/lib/dates';
 import { parseAmount } from '../../../shared/lib/money';
 import type { StatementInput } from './statement';
 
-export type EntryType = 'invoice' | 'payment' | 'note';
+export type EntryType = 'invoice' | 'payment' | 'note' | 'confirm';
 
 export interface Signature {
   name: string;
@@ -25,6 +25,10 @@ export interface Entry extends StatementInput {
   legacy: boolean;
   /** A payment that is really a supplier return or an earned discount. */
   subtype: PaymentSubtype | null;
+  /** Balance confirmation (إقرار مطابقة رصيد): its own number «م-N»… */
+  confirmNo: number | null;
+  /** …and the balance up to its date that it states (halalas, positive = له). */
+  confirmBalance: number | null;
 }
 
 export type PaymentSubtype = 'return' | 'discount';
@@ -48,7 +52,18 @@ export const ENTRY_LABEL: Record<EntryType, string> = {
   invoice: 'فاتورة',
   payment: 'دفعة',
   note: 'ملاحظة',
+  confirm: 'إقرار مطابقة',
 };
+
+/** Entries that carry an amount (invoice / payment); notes and confirmations do not. */
+export function hasAmount(type: EntryType): boolean {
+  return type === 'invoice' || type === 'payment';
+}
+
+/** Entries the recipient signs through a link: cash payments and balance confirmations. */
+export function isSignable(e: Pick<Entry, 'type' | 'subtype'>): boolean {
+  return isCashPayment(e) || e.type === 'confirm';
+}
 
 export const MAX_DETAILS = 500;
 export const MAX_ATTACHMENTS = 5;
@@ -70,6 +85,8 @@ export interface EntryFormInput {
    * any (so its date can still be fixed). Default true.
    */
   requireNoteText?: boolean;
+  /** Today in Riyadh (YYYY-MM-DD): a balance confirmation cannot be dated later. */
+  today?: string;
 }
 
 export type EntryFormResult =
@@ -80,13 +97,15 @@ export type EntryFormResult =
 export function validateEntryForm(v: EntryFormInput): EntryFormResult {
   const errors: Partial<Record<'amount' | 'date' | 'details' | 'attachments', string>> = {};
   let amount = 0;
-  if (v.type !== 'note') {
+  if (hasAmount(v.type)) {
     const parsed = parseAmount(v.amountText);
     if (parsed === null) errors.amount = 'أدخل مبلغاً صحيحاً (بحد أقصى خانتين عشريتين).';
     else if (parsed <= 0) errors.amount = 'أدخل مبلغاً أكبر من صفر.';
     else amount = parsed;
   }
   if (!isIsoDate(v.date)) errors.date = 'اختر تاريخاً صحيحاً.';
+  else if (v.type === 'confirm' && v.today && v.date > v.today)
+    errors.date = 'لا يكون إقرار المطابقة بتاريخ مستقبلي.';
   const details = cleanText(v.details, { keepNewlines: true });
   if (details.length > MAX_DETAILS) errors.details = `التفاصيل أطول من ${MAX_DETAILS} حرف.`;
   if (v.type === 'note' && !details && v.requireNoteText !== false)

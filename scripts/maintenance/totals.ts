@@ -15,6 +15,7 @@ runMain(async () => {
   const only = arg('account');
   const r = await syncTotals(adminDb(), only ? { only } : {});
   console.log(
-    `totals: ${r.accounts} accounts, ${r.initialised} initialised, ${r.corrected.length} corrected`,
+    `totals: ${r.accounts} accounts, ${r.initialised} initialised, ${r.corrected.length} corrected; ` +
+      `confirmations: ${r.confirmChanged} changed, ${r.confirmedFixed} dates reset`,
   );
 });
