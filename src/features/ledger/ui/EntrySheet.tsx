@@ -25,13 +25,19 @@ import {
   type EntrySnapshot,
   type StoredImage,
 } from '../data/entriesRepo';
-import { entryLabel, isCashPayment, isLocked } from '../domain/types';
+import { entryLabel, isCashPayment, isLocked, isSignable } from '../domain/types';
+import {
+  confirmLabel,
+  confirmLinkMessage,
+  signerSide,
+} from '../../confirmations/domain/confirmation';
 import type { SignState } from './signState';
 
 export function EntrySheet({
   account,
   snap,
   balanceAfter,
+  confirmNow,
   signState,
   links,
   onClose,
@@ -40,6 +46,8 @@ export function EntrySheet({
   account: Account;
   snap: EntrySnapshot;
   balanceAfter: number | null;
+  /** Balance confirmations: the balance up to their date as the entries are now. */
+  confirmNow: number | null;
   signState: SignState;
   links: SignLink[];
   onClose: () => void;
@@ -78,7 +86,13 @@ export function EntrySheet({
     const win = mode === 'whatsapp' && waNumber ? window.open('', '_blank') : null;
     setBusy(true);
     try {
-      if (e.voucherNo === null) throw new AppError('لا يوجد رقم سند لهذه الدفعة.');
+      if (e.type === 'confirm') {
+        if (e.confirmNo === null) throw new AppError('لا يوجد رقم لهذا الإقرار.');
+        if (confirmNow !== null && confirmNow !== e.confirmBalance)
+          throw new AppError(
+            'تغيّر الرصيد منذ إنشاء هذا الإقرار. افتح «تعديل» واحفظه ليُحسب الرصيد من جديد، ثم أرسله.',
+          );
+      } else if (e.voucherNo === null) throw new AppError('لا يوجد رقم سند لهذه الدفعة.');
       const pending = links.filter((l) => l.entryId === e.id && l.status === 'pending');
       const token = await createSignLink(fb().db, user.uid, {
         account,
@@ -88,14 +102,25 @@ export function EntrySheet({
         pendingForEntry: pending,
       });
       const url = linkUrl(token, `${window.location.origin}${window.location.pathname}`);
-      const text = signLinkMessage({
-        payerName: settings.payerName,
-        voucherNo: e.voucherNo,
-        amount: e.amount,
-        date: e.date,
-        minutes: settings.linkMinutes,
-        url,
-      });
+      const text =
+        e.type === 'confirm'
+          ? confirmLinkMessage({
+              payerName: settings.payerName,
+              confirmNo: e.confirmNo ?? 0,
+              accountName: account.name,
+              balance: e.confirmBalance ?? 0,
+              date: e.date,
+              minutes: settings.linkMinutes,
+              url,
+            })
+          : signLinkMessage({
+              payerName: settings.payerName,
+              voucherNo: e.voucherNo ?? 0,
+              amount: e.amount,
+              date: e.date,
+              minutes: settings.linkMinutes,
+              url,
+            });
       const wa = whatsAppLink(account.phone, text);
       setCreated({ url, wa });
       if (mode === 'copy') {
@@ -137,14 +162,20 @@ export function EntrySheet({
   };
 
   const title =
-    isCashPayment(e) && e.voucherNo !== null ? `سند دفعة ${e.voucherNo}` : entryLabel(e);
+    e.type === 'confirm' && e.confirmNo !== null
+      ? `إقرار مطابقة ${confirmLabel(e.confirmNo)}`
+      : isCashPayment(e) && e.voucherNo !== null
+        ? `سند دفعة ${e.voucherNo}`
+        : entryLabel(e);
+  const stated = e.confirmBalance ?? 0;
+  const confirmChanged = e.type === 'confirm' && confirmNow !== null && confirmNow !== stated;
 
   if (confirmDelete)
     return (
       <Sheet title={`نقل ${title} إلى سلة المهملات؟`} onClose={() => setConfirmDelete(false)}>
         <p style={{ margin: 0, lineHeight: 1.8 }}>
           تختفي من الكشف
-          {e.type === 'note' ? (
+          {e.type === 'note' || e.type === 'confirm' ? (
             ' ولا يتغيّر الرصيد'
           ) : (
             <>
@@ -196,7 +227,33 @@ export function EntrySheet({
             صُرف إلى: <strong>{account.name}</strong>
           </div>
         )}
-        {e.type !== 'note' && (
+        {e.type === 'confirm' && (
+          <>
+            <div className="muted" style={{ fontSize: 14 }}>
+              رصيد «{account.name}» حتى {displayDate(e.date)} كما يذكره الإقرار:
+            </div>
+            <div style={{ fontSize: 28, fontWeight: 600, color: 'var(--conf)' }}>
+              <Money halalas={stated} abs />{' '}
+              <span style={{ fontSize: 16 }}>{SIDE_LABEL[balanceSide(stated)]}</span>
+            </div>
+            <div className="muted" style={{ fontSize: 14 }}>
+              {signerSide(stated)
+                ? `${amountInWords(Math.abs(stated))} — «${signerSide(stated)}» بلسان المورد/العميل`
+                : 'الحساب مسدَّد في ذلك التاريخ'}
+            </div>
+            {confirmChanged && (
+              <div className="banner banner-warn" role="note">
+                تغيّر الرصيد بعد المطابقة: الرصيد حتى هذا التاريخ الآن{' '}
+                <strong className="num">{formatAmount(Math.abs(confirmNow ?? 0))}</strong>{' '}
+                {SIDE_LABEL[balanceSide(confirmNow ?? 0)]}.{' '}
+                {e.signature
+                  ? 'يبقى الإقرار كما وُقّع؛ أنشئ إقراراً جديداً إن لزم.'
+                  : 'عدّله واحفظه ليُحسب من جديد قبل الإرسال.'}
+              </div>
+            )}
+          </>
+        )}
+        {(e.type === 'invoice' || e.type === 'payment') && (
           <>
             <div
               style={{
@@ -213,7 +270,7 @@ export function EntrySheet({
           </>
         )}
         {e.details && <div style={{ overflowWrap: 'anywhere' }}>البيان: {e.details}</div>}
-        {balanceAfter !== null && (
+        {balanceAfter !== null && e.type !== 'confirm' && (
           <div className="muted num" style={{ fontSize: 13 }}>
             الرصيد بعدها: {formatAmount(Math.abs(balanceAfter))}{' '}
             {SIDE_LABEL[balanceSide(balanceAfter)]}
@@ -223,7 +280,7 @@ export function EntrySheet({
 
       {e.attachments.length > 0 && <Attachments accountId={account.id} ids={e.attachments} />}
 
-      {isCashPayment(e) && (
+      {isSignable(e) && (
         <div
           style={{
             borderTop: '1px solid var(--rule)',
@@ -320,9 +377,9 @@ export function EntrySheet({
           paddingTop: 12,
         }}
       >
-        {isCashPayment(e) && (
+        {isSignable(e) && (
           <Link className="btn" to={`/print/voucher/${account.id}/${e.id}`}>
-            طباعة السند
+            {e.type === 'confirm' ? 'طباعة الإقرار' : 'طباعة السند'}
           </Link>
         )}
         <button type="button" className="btn" onClick={onEdit}>
@@ -342,7 +399,8 @@ export function EntrySheet({
       </div>
       {locked && (
         <p className="hint" style={{ margin: 0 }}>
-          تعديل السند الموقّع يلغي توقيعه ويلزم إرسال رابط جديد، ويصل تنبيه للمالك والإدارة.
+          تعديل {e.type === 'confirm' ? 'الإقرار' : 'السند'} الموقّع يلغي توقيعه ويلزم إرسال رابط
+          جديد، ويصل تنبيه للمالك والإدارة.
         </p>
       )}
     </Sheet>

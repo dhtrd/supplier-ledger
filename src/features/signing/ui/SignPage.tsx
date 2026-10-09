@@ -12,6 +12,7 @@ import { Logo } from '../../../shared/ui/Logo';
 import { Money } from '../../../shared/ui/RiyalSign';
 import { expiresAtMs, getPublicLink, signLink, type SignLink } from '../data/signLinksRepo';
 import { SignaturePad, type SignaturePadHandle } from './SignaturePad';
+import { confirmLabel, letterParts } from '../../confirmations/domain/confirmation';
 
 const MAX_SIGNATURE_CHARS = 61_440;
 const TOKEN = /^[A-Za-z0-9_-]{22,64}$/;
@@ -55,6 +56,9 @@ export function SignPage() {
   }, [token, validToken]);
 
   const link = view.kind === 'ready' || view.kind === 'done' ? view.link : null;
+  // A balance confirmation (إقرار مطابقة رصيد) instead of a payment voucher.
+  const isConfirm = link?.confirmNo != null;
+  const docName = isConfirm ? 'إقرار مطابقة رصيد' : 'سند استلام دفعة';
   // The server (rules) decides expiry: the page was readable, so the link was
   // live. The recipient's phone clock may be wrong, so it never blocks signing;
   // it only feeds the countdown text.
@@ -109,10 +113,10 @@ export function SignPage() {
         {link && <Logo data={link.logo} size={52} placeholder="" hideEmpty />}
         <div>
           <div className="serif" style={{ fontSize: 20 }}>
-            {link?.accountName ?? 'سند استلام دفعة'}
+            {link?.accountName ?? docName}
           </div>
           <div className="muted" style={{ fontSize: 13 }}>
-            سند استلام دفعة
+            {docName}
           </div>
         </div>
       </header>
@@ -120,7 +124,7 @@ export function SignPage() {
       {view.kind === 'loading' && (
         <div className="empty">
           <div className="spinner" style={{ margin: '0 auto 12px' }} />
-          جارٍ فتح السند…
+          جارٍ فتح الرابط…
         </div>
       )}
       {view.kind === 'error' && (
@@ -141,7 +145,11 @@ export function SignPage() {
         <Result
           tone="good"
           title="تم التوقيع"
-          text={`شكراً ${view.name}. سُجّل استلامك لمبلغ ${formatAmount(view.link.amount)} ريال، وأُلغي هذا الرابط.`}
+          text={
+            view.link.confirmNo != null
+              ? `شكراً ${view.name}. سُجّل إقرارك بالرصيد حتى ${displayDate(view.link.date)}، وأُلغي هذا الرابط.`
+              : `شكراً ${view.name}. سُجّل استلامك لمبلغ ${formatAmount(view.link.amount)} ريال، وأُلغي هذا الرابط.`
+          }
         />
       )}
 
@@ -151,7 +159,9 @@ export function SignPage() {
         >
           <div className="row-between" style={{ alignItems: 'baseline' }}>
             <h1 className="serif" style={{ margin: 0, fontSize: 26 }}>
-              سند دفعة {view.link.voucherNo}
+              {view.link.confirmNo != null
+                ? `إقرار مطابقة ${confirmLabel(view.link.confirmNo)}`
+                : `سند دفعة ${view.link.voucherNo}`}
             </h1>
             <span className="muted num" style={{ fontSize: 13 }}>
               {displayDate(view.link.date)}
@@ -172,23 +182,29 @@ export function SignPage() {
               gap: 8,
             }}
           >
-            <div>
-              دفعة من <strong>{view.link.payerName}</strong> إلى{' '}
-              <strong>{view.link.accountName}</strong>
-            </div>
-            <div style={{ fontSize: 32, fontWeight: 600 }}>
-              <Money halalas={view.link.amount} />
-            </div>
-            <div className="muted" style={{ fontSize: 14 }}>
-              {amountInWords(view.link.amount)}
-            </div>
+            {view.link.confirmNo != null ? (
+              <ConfirmText link={view.link} />
+            ) : (
+              <>
+                <div>
+                  دفعة من <strong>{view.link.payerName}</strong> إلى{' '}
+                  <strong>{view.link.accountName}</strong>
+                </div>
+                <div style={{ fontSize: 32, fontWeight: 600 }}>
+                  <Money halalas={view.link.amount} />
+                </div>
+                <div className="muted" style={{ fontSize: 14 }}>
+                  {amountInWords(view.link.amount)}
+                </div>
+              </>
+            )}
             {view.link.details && (
               <div style={{ overflowWrap: 'anywhere' }}>البيان: {view.link.details}</div>
             )}
           </div>
 
           <div className="field">
-            <label htmlFor="signer">اسم المستلم</label>
+            <label htmlFor="signer">{isConfirm ? 'اسم المُقِرّ' : 'اسم المستلم'}</label>
             <input
               id="signer"
               className="input"
@@ -231,14 +247,47 @@ export function SignPage() {
             disabled={!ready}
             onClick={submit}
           >
-            {busy ? 'جارٍ الحفظ…' : 'أقرّ بالاستلام'}
+            {busy ? 'جارٍ الحفظ…' : isConfirm ? 'أقرّ بصحة الرصيد' : 'أقرّ بالاستلام'}
           </button>
           <p className="hint" style={{ margin: 0, lineHeight: 1.7 }}>
-            بالضغط تُقرّ باستلام المبلغ أعلاه. يُحفظ توقيعك مع وقت الخادم، ويُلغى الرابط فوراً.
+            {isConfirm
+              ? 'بالضغط تُقرّ بأن الرصيد أعلاه مطابق لسجلاتكم في ذلك التاريخ.'
+              : 'بالضغط تُقرّ باستلام المبلغ أعلاه.'}{' '}
+            يُحفظ توقيعك مع وقت الخادم، ويُلغى الرابط فوراً.
           </p>
         </div>
       )}
     </div>
+  );
+}
+
+/** The confirmation letter as the recipient reads it before signing (form «٢»). */
+function ConfirmText({ link }: { link: SignLink }) {
+  const p = letterParts({
+    accountName: link.accountName,
+    payerName: link.payerName,
+    date: link.date,
+    balance: link.confirmBalance ?? 0,
+  });
+  return (
+    <>
+      <div>
+        السادة / <strong>{link.payerName}</strong>
+      </div>
+      <p className="serif" style={{ margin: 0, fontSize: 18, lineHeight: 2 }}>
+        {p.opening}{' '}
+        {p.amount ? (
+          <>
+            <strong className="num" style={{ fontSize: 22, whiteSpace: 'nowrap' }}>
+              {p.amount}
+            </strong>{' '}
+            ({p.words}) <strong>{p.side}</strong>، {p.closing}
+          </>
+        ) : (
+          p.closing
+        )}
+      </p>
+    </>
   );
 }
 

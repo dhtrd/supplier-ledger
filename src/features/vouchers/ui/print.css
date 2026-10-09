@@ -88,3 +88,39 @@
     overflow: hidden;
   }
 }
+
+/* «إقرار مطابقة رصيد» — formal letter (approved form «٢»). */
+.a4.letter {
+  gap: 10mm;
+}
+.letter-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5mm;
+  font-family: var(--serif);
+  font-size: 19px;
+  line-height: 2.1;
+}
+.letter-body p {
+  margin: 0;
+}
+.letter-amount {
+  font-size: 24px;
+  white-space: nowrap;
+}
+.letter-sign {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 380px;
+}
+.letter-sign-box {
+  height: 140px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}

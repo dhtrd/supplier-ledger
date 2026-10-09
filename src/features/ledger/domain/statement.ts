@@ -3,7 +3,7 @@ import type { Range } from '../../../shared/lib/dates';
 /** The minimum an entry needs for statement maths (keeps this module pure). */
 export interface StatementInput {
   id: string;
-  type: 'invoice' | 'payment' | 'note';
+  type: 'invoice' | 'payment' | 'note' | 'confirm';
   amount: number;
   signed: number;
   date: string;

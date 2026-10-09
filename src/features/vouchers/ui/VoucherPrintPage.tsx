@@ -11,6 +11,7 @@ import { Money } from '../../../shared/ui/RiyalSign';
 import { buildStatement, fullRange } from '../../ledger/domain/statement';
 import { useLedger } from '../../ledger/ui/useLedger';
 import { isCashPayment } from '../../ledger/domain/types';
+import { ConfirmationPrint } from '../../confirmations/ui/ConfirmationPrint';
 import { can } from '../../users/domain/types';
 import './print.css';
 
@@ -44,6 +45,15 @@ export function VoucherPrintPage() {
   if (ledger.account === undefined || ledger.entries === undefined) return <Loading />;
   const account = ledger.account;
   const row = statement.rows.find((r) => r.entry.id === entryId);
+  if (account && row?.entry.type === 'confirm')
+    return (
+      <>
+        <PrintToolbar back={`/a/${accountId}`} />
+        <div className="print-stage">
+          <ConfirmationPrint account={account} entry={row.entry} payerName={settings.payerName} />
+        </div>
+      </>
+    );
   if (!account || !row || !isCashPayment(row.entry)) return <ErrorBox message="السند غير موجود." />;
   const e = row.entry;
   const sig = e.signature;

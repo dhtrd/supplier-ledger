@@ -8,7 +8,7 @@ import { formatDateTime } from '../../../shared/lib/dates';
 import { useToast } from '../../../shared/ui/Toast';
 import { can } from '../../users/domain/types';
 import { markRead, NOTIFICATIONS_SHOWN } from '../data/notificationsRepo';
-import { isUnread, KIND_LABEL, type AppNotification } from '../domain/notification';
+import { confirmNote, isUnread, KIND_LABEL, type AppNotification } from '../domain/notification';
 import { useNotifications } from './NotificationsProvider';
 
 /** «التنبيهات» tab (approved option «ب»): newest first, per-user read state. */
@@ -69,8 +69,9 @@ export function NotificationsPage() {
           )}
         </div>
         <p className="hint" style={{ margin: 0 }}>
-          تعديل السندات الموقّعة والفواتير، والنقل إلى سلة المهملات والاسترجاع منها. لا تظهر لك
-          العمليات التي نفّذتها أنت. آخر {NOTIFICATIONS_SHOWN} تنبيه.
+          تعديل السندات الموقّعة والفواتير، والنقل إلى سلة المهملات والاسترجاع منها، وأي تغيير في
+          رصيد فترة عليها إقرار مطابقة موقّع. لا تظهر لك العمليات التي نفّذتها أنت. آخر{' '}
+          {NOTIFICATIONS_SHOWN} تنبيه.
         </p>
       </header>
       {rows.length === 0 ? (
@@ -92,6 +93,11 @@ export function NotificationsPage() {
                     <span style={{ display: 'block', fontWeight: fresh ? 700 : 500 }}>
                       {KIND_LABEL[n.kind]}: {n.title} — {n.accountName}
                     </span>
+                    {n.confirmDate && (
+                      <span className="stamp stamp-warn" style={{ marginInline: 0 }}>
+                        {confirmNote(n.confirmDate)}
+                      </span>
+                    )}
                     {n.changes.length > 0 && (
                       <ul className="note-lines">
                         {n.changes.map((c, i) => (

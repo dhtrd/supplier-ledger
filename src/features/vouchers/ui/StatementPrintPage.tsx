@@ -10,6 +10,7 @@ import { GROUP_LABEL } from '../../accounts/domain/types';
 import { buildStatement, fullRange } from '../../ledger/domain/statement';
 import { entryLabel } from '../../ledger/domain/types';
 import { can } from '../../users/domain/types';
+import { confirmLabel, confirmSummary } from '../../confirmations/domain/confirmation';
 import { useLedger } from '../../ledger/ui/useLedger';
 import { PrintToolbar } from './VoucherPrintPage';
 import './print.css';
@@ -101,9 +102,12 @@ export function StatementPrintPage() {
                   <td style={{ whiteSpace: 'nowrap' }}>
                     {entryLabel(e)}
                     {e.voucherNo !== null && ` ${e.voucherNo}`}
+                    {e.confirmNo !== null && ` ${confirmLabel(e.confirmNo)}`}
                     {e.signature && ' ✓'}
                   </td>
-                  <td style={{ overflowWrap: 'anywhere' }}>{e.details}</td>
+                  <td style={{ overflowWrap: 'anywhere' }}>
+                    {e.type === 'confirm' ? confirmSummary(e) : e.details}
+                  </td>
                   <td className="n" style={{ color: 'var(--lah)' }}>
                     {e.type === 'invoice' ? formatAmount(e.amount) : ''}
                   </td>

@@ -3,6 +3,7 @@ import { displayDate } from '../../../shared/lib/dates';
 import { balanceSide, SIDE_LABEL } from '../../../shared/lib/money';
 import type { Statement } from '../domain/statement';
 import { entryLabel, type Entry } from '../domain/types';
+import { confirmLabel, confirmSummary } from '../../confirmations/domain/confirmation';
 
 const MONEY = '#,##0.00';
 const riyals = (h: number) => h / 100;
@@ -52,8 +53,12 @@ export function statementSheet(
     rows.push([
       displayDate(e.date),
       entryLabel(e),
-      e.voucherNo !== null ? { value: e.voucherNo, type: Number } : null,
-      e.details,
+      e.voucherNo !== null
+        ? { value: e.voucherNo, type: Number }
+        : e.confirmNo !== null
+          ? confirmLabel(e.confirmNo)
+          : null,
+      e.type === 'confirm' ? confirmSummary(e) : e.details,
       e.type === 'invoice' ? money(e.amount) : null,
       e.type === 'payment' ? money(e.amount) : null,
       ...(opts.balances ? [money(Math.abs(balance)), side(balance)] : []),
