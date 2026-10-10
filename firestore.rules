@@ -485,9 +485,10 @@ service cloud.firestore {
         && !('confirmedThrough' in request.resource.data)
         && !('confirmedEntry' in request.resource.data)
         && stamped(request.resource.data);
-      allow update: if isManager()
-        && validAccount(request.resource.data)
-        && request.resource.data.get('balance', null) == resource.data.get('balance', null)
+      // (Every account rule checks the changed fields before the role: one
+      // batch shares a budget of 1000 evaluated expressions, and a rule that
+      // does not apply must fail cheaply — see tests/rules/budget.test.ts.)
+      allow update: if request.resource.data.get('balance', null) == resource.data.get('balance', null)
         && request.resource.data.get('entryCount', null) == resource.data.get('entryCount', null)
         && request.resource.data.get('lastDate', null) == resource.data.get('lastDate', null)
         && request.resource.data.get('totalsEntry', null) == resource.data.get('totalsEntry', null)
@@ -503,12 +504,13 @@ service cloud.firestore {
         && request.resource.data.get('archived', false) == resource.data.get('archived', false)
         && request.resource.data.get('archivedAt', null) == resource.data.get('archivedAt', null)
         && request.resource.data.get('archivedBy', null) == resource.data.get('archivedBy', null)
-        && touched(request.resource.data);
+        && touched(request.resource.data)
+        && validAccount(request.resource.data)
+        && isManager();
       // Archive / restore from the archive (owner and managers), audited.
       // (Only the archive fields are checked, so an account migrated with an
       // old-format phone can still be archived.)
-      allow update: if isManager()
-        && changed().hasOnly(['archived', 'archivedAt', 'archivedBy', 'auditId', 'updatedAt', 'updatedBy'])
+      allow update: if changed().hasOnly(['archived', 'archivedAt', 'archivedBy', 'auditId', 'updatedAt', 'updatedBy'])
         && request.resource.data.archived is bool
         && request.resource.data.archived != resource.data.get('archived', false)
         && (request.resource.data.archived
@@ -516,11 +518,11 @@ service cloud.firestore {
               && request.resource.data.archivedBy == request.auth.uid
             : !('archivedAt' in request.resource.data) && !('archivedBy' in request.resource.data))
         && touched(request.resource.data)
-        && audited('accounts/' + accountId);
+        && audited('accounts/' + accountId)
+        && isManager();
       // Move to the trash / restore (owner and managers): audited + notified.
       // Its entries stay as they are and come back with it.
-      allow update: if isManager()
-        && changed().hasOnly(['deleted', 'deletedAt', 'auditId', 'updatedAt', 'updatedBy'])
+      allow update: if changed().hasOnly(['deleted', 'deletedAt', 'auditId', 'updatedAt', 'updatedBy'])
         && request.resource.data.deleted is bool
         && request.resource.data.deleted != resource.data.deleted
         && (request.resource.data.deleted
@@ -528,7 +530,8 @@ service cloud.firestore {
             : !('deletedAt' in request.resource.data))
         && touched(request.resource.data)
         && audited('accounts/' + accountId)
-        && notified();
+        && notified()
+        && isManager();
       // Running totals (balance, live entries, latest date): moved by exactly
       // one entry change written in the same transaction. Anyone who may write
       // that entry may move them — and only by the entry's real difference.
