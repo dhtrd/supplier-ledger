@@ -13,7 +13,8 @@ function cspFor(appCheck: boolean): string {
     `script-src 'self'${g}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
-    "font-src 'self'",
+    // data: = the tiny unicode-range subsets inlined by the Arabic font package.
+    "font-src 'self' data:",
     `connect-src 'self' https://*.googleapis.com https://*.firebaseio.com${g}`,
     `frame-src https://*.firebaseapp.com${appCheck ? ' https://www.google.com https://recaptcha.google.com' : ''}`,
     "object-src 'none'",
