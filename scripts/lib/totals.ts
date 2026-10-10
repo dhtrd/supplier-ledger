@@ -10,7 +10,7 @@ import {
   totalsOf,
   type RunningTotals,
 } from '../../src/features/accounts/domain/totals.ts';
-import { balanceAt } from '../../src/features/confirmations/domain/confirmation.ts';
+import { balanceAt } from '../../src/features/confirmations/domain/balance.ts';
 
 export interface TotalsReport {
   accounts: number;

@@ -1,6 +1,7 @@
 import { displayDate } from '../../../shared/lib/dates';
 import { balanceSide, formatAmount, SIDE_LABEL } from '../../../shared/lib/money';
 import { amountInWords } from '../../../shared/lib/tafqit';
+import { balanceAt, type DatedSigned } from './balance';
 
 /**
  * «إقرار مطابقة رصيد» (owner decision 2026-10-09): an entry with no effect on
@@ -8,19 +9,7 @@ import { amountInWords } from '../../../shared/lib/tafqit';
  * signs it through a WhatsApp link, like a payment voucher.
  */
 
-/** The minimum needed for balance-at-date maths. */
-export interface DatedSigned {
-  date: string;
-  signed: number;
-  deleted: boolean;
-}
-
-/** Balance at the end of `date`: every live entry dated on or before it. */
-export function balanceAt(entries: readonly DatedSigned[], date: string): number {
-  let sum = 0;
-  for (const e of entries) if (!e.deleted && e.date <= date) sum += e.signed;
-  return sum;
-}
+export { balanceAt, type DatedSigned };
 
 /** Number shown on screen and paper: «م-3». */
 export function confirmLabel(no: number): string {

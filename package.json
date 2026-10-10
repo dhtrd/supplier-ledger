@@ -13,6 +13,7 @@
     "preview": "vite preview",
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc -b --noEmit",
+    "check:scripts": "node scripts/ci/check-script-imports.ts",
     "test": "vitest run --project unit",
     "test:rules": "firebase emulators:exec --only firestore --project demo-supplier-ledger \"vitest run --project rules\"",
     "format": "prettier --write .",
