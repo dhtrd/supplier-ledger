@@ -29,6 +29,8 @@ jobs:
       - run: npm run format:check
       - run: npm run lint
       - run: npm run typecheck
+      # The backup/maintenance scripts run TS directly in Node: every import must resolve.
+      - run: npm run check:scripts
       - run: npm test
       - name: Build
         run: npm run build
