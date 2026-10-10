@@ -25,6 +25,7 @@ import { setArchived } from '../../accounts/data/accountsRepo';
 import type { Account } from '../../accounts/domain/types';
 import {
   createEntry,
+  changedOnServer,
   entryChanged,
   getEntry,
   updateEntry,
@@ -47,6 +48,7 @@ import { entryTitle } from '../../notifications/domain/notification';
 import { ConfirmGate } from '../../../shared/ui/ConfirmGate';
 import { can } from '../../users/domain/types';
 import { EntryContextPanel } from './EntryContextPanel';
+import { requestVersionCheck } from '../../../core/appVersion';
 import { sharedWatch } from '../../../shared/lib/sharedWatch';
 import { watchEntries } from '../data/entriesRepo';
 import { amountInWords } from '../../../shared/lib/tafqit';
@@ -317,12 +319,21 @@ export function EntryFormPage() {
       reportError('entry-save', e);
       const denied =
         !!e && typeof e === 'object' && 'code' in e && String(e.code).includes('permission-denied');
-      // The rules compare the audit copy with the server's current version: a
-      // refusal on an edit almost always means someone changed it meanwhile.
+      if (!denied) {
+        toast.error(errorMessage(e));
+        setBusy(false);
+        return;
+      }
+      // Tell the real reason: someone changed the entry meanwhile, or this tab
+      // runs an older version of the app than the server rules expect.
+      requestVersionCheck();
+      const changed = current ? await changedOnServer(fb().db, id, current) : false;
       toast.error(
-        denied && current
-          ? 'تعذّر الحفظ: تغيّرت هذه العملية منذ فتحتها (ربما عدّلها مستخدم آخر). ارجع للكشف وافتحها من جديد.'
-          : errorMessage(e),
+        changed
+          ? 'تعذّر الحفظ: تغيّرت هذه العملية منذ فتحتها (عدّلها أو حذفها مستخدم آخر). ارجع للكشف وافتحها من جديد.'
+          : changed === null
+            ? 'تعذّر الحفظ: رفض الخادم العملية. تحقق من الاتصال، ثم حدّث الصفحة وأعد المحاولة.'
+            : 'تعذّر الحفظ: رفض الخادم العملية مع أن بياناتها لم تتغيّر — غالباً نسخة البرنامج المفتوحة قديمة. انسخ ما كتبته، ثم حدّث الصفحة (أو ارجع للكشف فتُحدَّث تلقائياً) وأعد المحاولة. إن تكرر فأبلغ الإدارة.',
       );
       setBusy(false);
     }
