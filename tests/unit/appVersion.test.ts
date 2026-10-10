@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { canReloadOn, freshUrl, RETRY_AFTER_MS, shouldReloadFor } from '../../src/core/appVersion';
+import {
+  canReloadOn,
+  freshUrl,
+  RETRY_AFTER_MS,
+  shouldReloadFor,
+} from '../../src/core/versionPolicy';
 
 describe('automatic reload onto a new version', () => {
   it('waits on screens where something is being typed', () => {

@@ -8,21 +8,16 @@
  * app fetches it; when it differs, the page reloads — but never on a screen
  * where something is being typed: there it waits until the user leaves it.
  */
+import { canReloadOn, freshUrl, shouldReloadFor } from './versionPolicy';
+
+export { canReloadOn, shouldReloadFor };
+
 declare const __BUILD_ID__: string;
 
 export const BUILD_ID: string = typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'dev';
 export const CHECK_EVERY_MS = 5 * 60_000;
-/** After one reload for a version, do not try again for it within this window (CDN cache). */
-export const RETRY_AFTER_MS = 15 * 60_000;
 const GUARD_KEY = 'sl:reloadedFor';
 export const CHECK_EVENT = 'sl:check-version';
-
-/** Screens where a reload would throw away typing: forms, sign-in, the public signing page. */
-const HOLD = /^\/(login|s\/|users|settings|a\/new$|a\/[^/]+\/edit$|a\/[^/]+\/entry\/)/;
-
-export function canReloadOn(pathname: string): boolean {
-  return !HOLD.test(pathname);
-}
 
 /** The published id, or null when it cannot be read (offline, dev server). */
 export async function fetchLatestId(base: string): Promise<string | null> {
@@ -35,18 +30,6 @@ export async function fetchLatestId(base: string): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-/** Same page and screen, new URL: the query makes the browser fetch a fresh index.html. */
-export function freshUrl(loc: Pick<Location, 'pathname' | 'hash'>, id: string): string {
-  return `${loc.pathname}?v=${encodeURIComponent(id)}${loc.hash}`;
-}
-
-/** True unless we already reloaded for `id` recently (avoids a loop on a stale CDN copy). */
-export function shouldReloadFor(id: string, now: number, guard: string | null): boolean {
-  if (!guard) return true;
-  const [gid, at] = guard.split('@');
-  return gid !== id || now - Number(at) > RETRY_AFTER_MS;
 }
 
 export function reloadTo(id: string): void {
