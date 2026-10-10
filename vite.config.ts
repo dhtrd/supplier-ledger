@@ -34,13 +34,28 @@ const csp = (appCheck: boolean): Plugin => ({
   ],
 });
 
+/**
+ * Build id for «new version» detection (src/core/appVersion.ts): embedded in
+ * the code and written to version.json beside index.html.
+ */
+const versionFile = (id: string): Plugin => ({
+  name: 'version-json',
+  apply: 'build',
+  generateBundle() {
+    this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ id }) });
+  },
+});
+
 // GitHub Pages serves the app under /<repo>/.
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
   const env = { ...loadEnv(mode, process.cwd(), 'VITE_'), ...process.env };
+  const buildId =
+    command === 'build' ? (env.GITHUB_SHA?.slice(0, 12) ?? `local-${Date.now()}`) : 'dev';
   const appCheck = !!env.VITE_RECAPTCHA_SITE_KEY?.trim();
   return {
     base: '/supplier-ledger/',
-    plugins: [react(), csp(appCheck)],
+    plugins: [react(), csp(appCheck), versionFile(buildId)],
+    define: { __BUILD_ID__: JSON.stringify(buildId) },
     // The Firebase SDK alone is ~600 kB (185 kB gzip); that is expected.
     build: { sourcemap: false, target: 'es2022', chunkSizeWarningLimit: 700 },
   };

@@ -1,3 +1,4 @@
+import { VersionWatcher } from './VersionWatcher';
 import { NotificationsPage } from '../features/notifications/ui/NotificationsPage';
 import { TrashPage } from '../features/trash/ui/TrashPage';
 import { lazy, Suspense, type ReactNode } from 'react';
@@ -45,6 +46,7 @@ export function App() {
   return (
     <ToastProvider>
       <HashRouter>
+        <VersionWatcher />
         <Routes>
           {/* Public: opened by the recipient from WhatsApp, no login. */}
           <Route path="/s/:token" element={<SignPage />} />

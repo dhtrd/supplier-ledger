@@ -6,6 +6,7 @@ import {
   doc,
   getDocs,
   getDoc,
+  getDocFromServer,
   onSnapshot,
   orderBy,
   query,
@@ -300,11 +301,35 @@ async function readForChange(
   const s = await tx.get(doc(entriesCol(db, accountId), current.entry.id));
   if (!s.exists()) throw new AppError(STALE);
   const before = s.data();
-  const same = (k: string) =>
-    JSON.stringify(before[k] ?? null) === JSON.stringify(current.raw[k] ?? null);
-  if (!['auditId', 'deleted', 'signLinkId', 'amount', 'date', 'confirmBalance'].every(same))
-    throw new AppError(STALE);
+  if (!sameAsOpened(before, current)) throw new AppError(STALE);
   return { before, totals, confirmedThrough };
+}
+
+/** Fields whose change by someone else makes a pending edit stale. */
+const WATCHED = ['auditId', 'deleted', 'signLinkId', 'amount', 'date', 'confirmBalance'];
+
+function sameAsOpened(server: Record<string, unknown>, current: EntrySnapshot): boolean {
+  return WATCHED.every(
+    (k) => JSON.stringify(server[k] ?? null) === JSON.stringify(current.raw[k] ?? null),
+  );
+}
+
+/**
+ * After the server refused a save: did someone really change (or delete) the
+ * entry meanwhile? Reads the server copy, never the device cache. Answers
+ * null when it cannot tell (e.g. offline).
+ */
+export async function changedOnServer(
+  db: Firestore,
+  accountId: string,
+  current: EntrySnapshot,
+): Promise<boolean | null> {
+  try {
+    const s = await getDocFromServer(doc(entriesCol(db, accountId), current.entry.id));
+    return !s.exists() || !sameAsOpened(s.data(), current);
+  } catch {
+    return null;
+  }
 }
 
 /** Moves the account totals by one entry change (same transaction; rules check it). */
