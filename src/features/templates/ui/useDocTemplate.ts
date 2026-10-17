@@ -1,20 +1,18 @@
 import { useEffect, useState } from 'react';
 import { errorMessage, reportError } from '../../../core/errors';
 import { fb } from '../../../core/firebase';
-import { getLink } from '../../signing/data/signLinksRepo';
 import { getTemplates } from '../data/templatesRepo';
 import type { DocKind, DocTemplate } from '../domain/template';
 
 /**
- * The template a document prints with. A signed voucher/confirmation prints
- * exactly as it was signed (owner decision 2026-10-17): the template copied
- * into its signing link, or the current document if it had none. Otherwise
- * the account's current template. null = the current (default) document.
+ * The template a document prints with: always the account's current one,
+ * signed documents included (owner decision 2026-10-17, replacing «a signed
+ * document prints as it was signed»). The signature, amount, balance, number
+ * and date still come from the signed entry. null = the default document.
  */
 export function useDocTemplate(
   accountId: string,
   kind: DocKind,
-  signLinkId: string | null,
   ready: boolean,
 ): { template: DocTemplate | null | undefined; error: string } {
   const [state, setState] = useState<{
@@ -22,16 +20,12 @@ export function useDocTemplate(
     template: DocTemplate | null;
     error: string;
   } | null>(null);
-  const key = `${accountId}/${kind}/${signLinkId ?? ''}`;
+  const key = `${accountId}/${kind}`;
   useEffect(() => {
     if (!ready) return;
     let alive = true;
-    const { db } = fb();
-    const load = signLinkId
-      ? getLink(db, signLinkId).then((l) => l?.template ?? null)
-      : getTemplates(db, accountId).then((t) => t[kind] ?? null);
-    load
-      .then((template) => alive && setState({ key, template, error: '' }))
+    getTemplates(fb().db, accountId)
+      .then((t) => alive && setState({ key, template: t[kind] ?? null, error: '' }))
       .catch((e) => {
         reportError('doc-template', e);
         if (alive) setState({ key, template: null, error: errorMessage(e) });
@@ -39,7 +33,7 @@ export function useDocTemplate(
     return () => {
       alive = false;
     };
-  }, [accountId, kind, signLinkId, ready, key]);
+  }, [accountId, kind, ready, key]);
   if (!state || state.key !== key) return { template: undefined, error: '' };
   return { template: state.template, error: state.error };
 }

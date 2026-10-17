@@ -236,12 +236,6 @@ export async function revokeLink(db: Firestore, id: string): Promise<void> {
   await updateDoc(doc(db, 'signLinks', id), { status: 'revoked' });
 }
 
-/** Staff: one link by id (e.g. the one a signed entry was signed through). */
-export async function getLink(db: Firestore, id: string): Promise<SignLink | null> {
-  const s = await getDoc(doc(db, 'signLinks', id));
-  return s.exists() ? toLink(s) : null;
-}
-
 /** Public (no login): reads a link only while it is pending and unexpired. */
 export async function getPublicLink(db: Firestore, token: string): Promise<SignLink | null> {
   const s = await getDoc(doc(db, 'signLinks', token));
