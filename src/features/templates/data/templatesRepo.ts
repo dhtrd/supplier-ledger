@@ -1,9 +1,10 @@
 import {
+  collection,
   deleteField,
   doc,
   getDoc,
+  runTransaction,
   serverTimestamp,
-  setDoc,
   type Firestore,
 } from 'firebase/firestore';
 import { AppError } from '../../../core/errors';
@@ -42,7 +43,11 @@ export async function getRawTemplate(
   return v && typeof v === 'object' ? (v as Record<string, unknown>) : null;
 }
 
-/** Saves one document's template (null = back to the current document). Managers only. */
+/**
+ * Saves one document's template (null = back to the current document).
+ * Managers only. Logged in auditLog with the whole previous document
+ * (owner decision 2026-10-17); a transaction so «before» is the server copy.
+ */
 export async function saveTemplate(
   db: Firestore,
   uid: string,
@@ -57,9 +62,22 @@ export async function saveTemplate(
     if (errors.length) throw new AppError(errors[0]!);
     value = clean;
   }
-  await setDoc(
-    ref(db, accountId),
-    { [kind]: value, updatedAt: serverTimestamp(), updatedBy: uid },
-    { merge: true },
-  );
+  const target = ref(db, accountId);
+  const audit = doc(collection(db, 'auditLog'));
+  await runTransaction(db, async (tx) => {
+    const cur = await tx.get(target);
+    tx.set(audit, {
+      actor: uid,
+      action: 'template',
+      kind,
+      path: target.path,
+      before: cur.exists() ? cur.data() : {},
+      at: serverTimestamp(),
+    });
+    tx.set(
+      target,
+      { [kind]: value, auditId: audit.id, updatedAt: serverTimestamp(), updatedBy: uid },
+      { merge: true },
+    );
+  });
 }

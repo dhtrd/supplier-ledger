@@ -5,7 +5,16 @@ import {
   assertSucceeds,
   type RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
-import { doc, getDoc, serverTimestamp, setDoc, type Firestore } from 'firebase/firestore';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  serverTimestamp,
+  setDoc,
+  writeBatch,
+  type Firestore,
+} from 'firebase/firestore';
 import { ACC_A, ACC_B, createEnv, seed } from './setup';
 import { getAccounts } from '../../src/features/accounts/data/accountsRepo';
 import { getEntry } from '../../src/features/ledger/data/entriesRepo';
@@ -36,6 +45,34 @@ const raw = (over: Record<string, unknown>) => ({
   ...over,
 });
 
+/** A raw template write with its audit record (as the app does it). */
+async function putRaw(
+  db: Firestore,
+  uid: string,
+  data: Record<string, unknown>,
+  audit: Record<string, unknown> = {},
+): Promise<void> {
+  const cur = await getDoc(doc(db, 'templates', ACC_A));
+  const a = doc(collection(db, 'auditLog'));
+  const b = writeBatch(db);
+  b.set(a, {
+    actor: uid,
+    action: 'template',
+    kind: 'confirm',
+    path: `templates/${ACC_A}`,
+    before: cur.exists() ? cur.data() : {},
+    at: serverTimestamp(),
+    ...audit,
+  });
+  b.set(doc(db, 'templates', ACC_A), {
+    updatedAt: serverTimestamp(),
+    updatedBy: uid,
+    auditId: a.id,
+    ...data,
+  });
+  await b.commit();
+}
+
 describe('saving templates', () => {
   it('managers save and reset; entry users read their accounts only and cannot save', async () => {
     const v = { ...defaultTemplate('voucher', 'v04'), title: 'سند استلام', sub: 'س.ت 1' };
@@ -60,12 +97,7 @@ describe('saving templates', () => {
 
   it('refuses a confirmation text without the balance, date or side, and bad values', async () => {
     const put = (confirm: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
-      setDoc(doc(as('owner'), 'templates', ACC_A), {
-        confirm,
-        updatedAt: serverTimestamp(),
-        updatedBy: 'owner',
-        ...extra,
-      });
+      putRaw(as('owner'), 'owner', { confirm, ...extra });
     await assertSucceeds(put(raw({})));
     await assertFails(put(raw({ body: 'نقرّ بأن الرصيد {الرصيد} حتى {التاريخ}' })));
     await assertFails(put(raw({ color: 'red' })));
@@ -74,6 +106,56 @@ describe('saving templates', () => {
     await assertFails(put(raw({ body: 'x'.repeat(801) })));
     await assertFails(put(raw({ script: '<b>' })));
     await assertFails(put(raw({}), { other: 1 }));
+  });
+});
+
+describe('every template save is logged', () => {
+  it('writes an audit record with the previous document', async () => {
+    const v = defaultTemplate('voucher', 'v04');
+    await saveTemplate(as('admin'), 'admin', ACC_A, 'voucher', v);
+    await saveTemplate(as('owner'), 'owner', ACC_A, 'voucher', { ...v, layout: 'v07' });
+    const log = (await getDocs(collection(as('owner'), 'auditLog'))).docs
+      .map((d) => d.data())
+      .filter((d) => d.action === 'template');
+    expect(log).toHaveLength(2);
+    const second = log.find((d) => d.actor === 'owner')!;
+    expect([second.kind, second.path, second.before.voucher.layout]).toEqual([
+      'voucher',
+      `templates/${ACC_A}`,
+      'v04',
+    ]);
+  });
+
+  it('refuses a save without a new audit record, or with a forged one', async () => {
+    const owner = as('owner');
+    const t = raw({});
+    // No audit at all.
+    await assertFails(
+      setDoc(doc(owner, 'templates', ACC_A), {
+        confirm: t,
+        updatedAt: serverTimestamp(),
+        updatedBy: 'owner',
+      }),
+    );
+    await assertSucceeds(putRaw(owner, 'owner', { confirm: t }));
+    // Reusing the previous audit id.
+    const prev = (await getDoc(doc(owner, 'templates', ACC_A))).get('auditId') as string;
+    await assertFails(
+      setDoc(doc(owner, 'templates', ACC_A), {
+        confirm: t,
+        updatedAt: serverTimestamp(),
+        updatedBy: 'owner',
+        auditId: prev,
+      }),
+    );
+    // A false «before», a wrong action, a missing kind.
+    await assertFails(putRaw(owner, 'owner', { confirm: t }, { before: {} }));
+    await assertFails(putRaw(owner, 'owner', { confirm: t }, { action: 'update' }));
+    await assertFails(putRaw(owner, 'owner', { confirm: t }, { kind: 'other' }));
+    // A data-entry user cannot log (or save) a template change.
+    await assertFails(putRaw(as('entry'), 'entry', { confirm: t }));
+    // A correct save still works after the refusals.
+    await assertSucceeds(putRaw(owner, 'owner', { confirm: t }));
   });
 });
 

@@ -357,13 +357,20 @@ service cloud.firestore {
     // state (for archive/unarchive: the previous archived flag).
     match /auditLog/{id} {
       function seg() { return request.resource.data.path.split('/'); }
+      // A supplier's document templates (owner decision 2026-10-17: edits are logged).
+      function isTpl() { return seg()[0] == 'templates'; }
       function target() {
-        return seg().size() == 2
+        return isTpl()
+          ? /databases/$(database)/documents/templates/$(seg()[1])
+          : seg().size() == 2
           ? /databases/$(database)/documents/accounts/$(seg()[1])
           : /databases/$(database)/documents/accounts/$(seg()[1])/entries/$(seg()[3]);
       }
       function beforeIsReal() {
-        return request.resource.data.action == 'create'
+        return request.resource.data.action == 'template'
+          ? (exists(target()) ? request.resource.data.before == get(target()).data
+                              : request.resource.data.before.size() == 0)
+          : request.resource.data.action == 'create'
           ? request.resource.data.before.size() == 0 && !exists(target())
           : request.resource.data.action in ['archive', 'unarchive']
           ? request.resource.data.before.keys().hasOnly(['archived'])
@@ -371,13 +378,17 @@ service cloud.firestore {
           : request.resource.data.before == get(target()).data;
       }
       allow read: if isManager();
-      allow create: if request.resource.data.keys().hasOnly(['actor', 'action', 'path', 'before', 'at'])
+      allow create: if request.resource.data.keys().hasOnly(['actor', 'action', 'path', 'before', 'at', 'kind'])
         && request.resource.data.actor == request.auth.uid
         && request.resource.data.at == request.time
-        && request.resource.data.action in ['create', 'update', 'delete', 'restore', 'archive', 'unarchive']
+        && request.resource.data.action in ['create', 'update', 'delete', 'restore', 'archive', 'unarchive', 'template']
         && request.resource.data.path is string
-        && request.resource.data.path.matches('^accounts/[A-Za-z0-9_-]{1,64}(/entries/[A-Za-z0-9_-]{1,64})?$')
-        && (request.resource.data.action in ['archive', 'unarchive'] ? seg().size() == 2
+        && request.resource.data.path.matches('^(accounts/[A-Za-z0-9_-]{1,64}(/entries/[A-Za-z0-9_-]{1,64})?|templates/[A-Za-z0-9_-]{1,64})$')
+        // Template records name the document changed; nothing else carries `kind`.
+        && (request.resource.data.action == 'template') == isTpl()
+        && (isTpl() ? request.resource.data.get('kind', '') in ['statement', 'confirm', 'voucher']
+                    : !('kind' in request.resource.data))
+        && ((isTpl() || request.resource.data.action in ['archive', 'unarchive']) ? seg().size() == 2
             : request.resource.data.action in ['update', 'create'] ? seg().size() == 4 : true)
         && request.resource.data.before is map
         && getAfter(target()).data.get('auditId', '') == id
@@ -802,13 +813,25 @@ service cloud.firestore {
                   && t.body.matches('(?s).*[{]الجهة[}].*')));
       }
       function ok(d, kind) { return !(kind in d) || validT(d[kind], kind); }
+      // Every save is logged (owner decision 2026-10-17): a new audit record
+      // written in the same batch, which points back at this document.
+      function audited(prevId) {
+        return request.resource.data.auditId is string
+          && request.resource.data.auditId != prevId
+          && getAfter(/databases/$(database)/documents/auditLog/$(request.resource.data.auditId)).data.path
+             == 'templates/' + accountId;
+      }
+      function validDoc(d) {
+        return d.keys().hasOnly(['statement', 'confirm', 'voucher', 'updatedAt', 'updatedBy', 'auditId'])
+          && ok(d, 'statement')
+          && ok(d, 'confirm')
+          && ok(d, 'voucher')
+          && touched(d);
+      }
       allow get: if canAccess(accountId);
-      allow create, update: if request.resource.data.keys().hasOnly(['statement', 'confirm', 'voucher',
-                                                                    'updatedAt', 'updatedBy'])
-        && ok(request.resource.data, 'statement')
-        && ok(request.resource.data, 'confirm')
-        && ok(request.resource.data, 'voucher')
-        && touched(request.resource.data)
+      allow create: if validDoc(request.resource.data) && audited('') && isManager();
+      allow update: if validDoc(request.resource.data)
+        && audited(resource.data.get('auditId', ''))
         && isManager();
       allow delete: if false;
     }

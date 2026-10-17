@@ -11,14 +11,27 @@ import { ENTRY_LABEL, type EntryType } from '../../ledger/domain/types';
 import { listUsers } from '../../users/data/usersRepo';
 import { can } from '../../users/domain/types';
 import { listAudit, type AuditAction, type AuditItem } from '../data/settingsRepo';
+import { DOC_KINDS, DOC_LABEL, layoutOf, type DocKind } from '../../templates/domain/template';
 
 const ACTION_LABEL: Record<AuditAction, string> = {
+  create: 'إنشاء',
   update: 'تعديل',
   delete: 'نقل للسلة:',
   restore: 'استرجاع',
   archive: 'أرشفة',
   unarchive: 'إعادة من الأرشيف:',
+  template: 'تعديل نموذج',
 };
+
+/** «before» of a template record: the kinds that had their own template then. */
+function templatesBefore(b: Record<string, unknown>): string {
+  const had = DOC_KINDS.filter((k) => b[k] && typeof b[k] === 'object').map((k) => {
+    const layout = (b[k] as { layout?: unknown }).layout;
+    const name = typeof layout === 'string' ? layoutOf(k, layout)?.name : undefined;
+    return name ? `${DOC_LABEL[k]} («${name}»)` : DOC_LABEL[k];
+  });
+  return had.length ? `نماذج الحساب: ${had.join('، ')}` : 'لم يكن للحساب نماذج خاصة';
+}
 
 /** Last 100 edits/deletes with the version before the change (managers only). */
 export function AuditPage() {
@@ -72,6 +85,7 @@ export function AuditPage() {
           const b = it.before;
           const accountId = it.path.split('/')[1] ?? '';
           const isAccount = it.path.split('/').length === 2;
+          const isTemplate = it.action === 'template';
           const type = (
             typeof b.type === 'string' && b.type in ENTRY_LABEL ? b.type : 'note'
           ) as EntryType;
@@ -83,7 +97,12 @@ export function AuditPage() {
             >
               <div className="row-between">
                 <strong style={{ color: it.action === 'delete' ? 'var(--alayh)' : 'var(--ink)' }}>
-                  {ACTION_LABEL[it.action]} {isAccount ? 'حساب' : ENTRY_LABEL[type]}
+                  {ACTION_LABEL[it.action]}{' '}
+                  {isTemplate
+                    ? `«${DOC_LABEL[it.kind as DocKind] ?? 'مستند'}»`
+                    : isAccount
+                      ? 'حساب'
+                      : ENTRY_LABEL[type]}
                   {!isAccount && typeof b.voucherNo === 'number' && ` #${b.voucherNo}`}
                 </strong>
                 <span className="muted num" style={{ fontSize: 12 }}>
@@ -96,6 +115,19 @@ export function AuditPage() {
                   عرض الحساب
                 </Link>
               </div>
+              {isTemplate && (
+                <div
+                  style={{
+                    fontSize: 13,
+                    marginTop: 6,
+                    padding: '6px 10px',
+                    background: 'var(--band)',
+                    borderRadius: 8,
+                  }}
+                >
+                  قبل التغيير: {templatesBefore(b)}
+                </div>
+              )}
               {!isAccount && (
                 <div
                   className="num"
