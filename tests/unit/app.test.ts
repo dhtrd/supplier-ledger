@@ -17,6 +17,7 @@ import { can, validateUserForm, type UserProfile } from '../../src/features/user
 const entry = (p: Partial<Entry>): Entry => ({
   confirmNo: null,
   confirmBalance: null,
+  signLinkId: null,
   id: 'e1',
   type: 'invoice',
   amount: 100,
@@ -215,6 +216,7 @@ describe('signing state of a payment', () => {
     voucherNo: 1,
     confirmNo: null,
     confirmBalance: null,
+    template: null,
     ttlMinutes: 60,
     status: 'pending',
     synced: false,

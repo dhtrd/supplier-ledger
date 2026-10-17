@@ -20,6 +20,7 @@ import { generateToken } from '../../../shared/lib/token';
 import { amountInWords } from '../../../shared/lib/tafqit';
 import type { Account } from '../../accounts/domain/types';
 import type { Entry } from '../../ledger/domain/types';
+import { parseTemplate, type DocTemplate } from '../../templates/domain/template';
 
 export type LinkStatus = 'pending' | 'signed' | 'revoked';
 
@@ -39,6 +40,8 @@ export interface SignLink {
   /** Balance confirmation links: «م-N» and the balance they state (else null). */
   confirmNo: number | null;
   confirmBalance: number | null;
+  /** The supplier's template at the time the link was made (null = current document). */
+  template: DocTemplate | null;
   ttlMinutes: number;
   status: LinkStatus;
   synced: boolean;
@@ -70,6 +73,7 @@ export function toLink(s: DocumentSnapshot): SignLink {
     voucherNo: int(d.voucherNo),
     confirmNo: typeof d.confirmNo === 'number' ? d.confirmNo : null,
     confirmBalance: typeof d.confirmBalance === 'number' ? d.confirmBalance : null,
+    template: parseTemplate(typeof d.confirmNo === 'number' ? 'confirm' : 'voucher', d.template),
     ttlMinutes: int(d.ttlMinutes, 60),
     status: st === 'signed' || st === 'revoked' ? st : 'pending',
     synced: d.synced === true,
@@ -103,6 +107,8 @@ export async function createSignLink(
     payerName: string;
     ttlMinutes: number;
     pendingForEntry: SignLink[];
+    /** The stored template map for this document kind (copied as-is; rules compare it). */
+    template?: Record<string, unknown> | null;
   },
 ): Promise<string> {
   const { account, entry } = args;
@@ -127,6 +133,7 @@ export async function createSignLink(
           confirmBalance: entry.confirmBalance ?? 0,
         }
       : { amountWords: amountInWords(entry.amount), voucherNo: entry.voucherNo }),
+    template: args.template ?? null,
     ttlMinutes: args.ttlMinutes,
     status: 'pending',
     synced: false,
@@ -227,6 +234,12 @@ export async function pendingLinkIds(
 
 export async function revokeLink(db: Firestore, id: string): Promise<void> {
   await updateDoc(doc(db, 'signLinks', id), { status: 'revoked' });
+}
+
+/** Staff: one link by id (e.g. the one a signed entry was signed through). */
+export async function getLink(db: Firestore, id: string): Promise<SignLink | null> {
+  const s = await getDoc(doc(db, 'signLinks', id));
+  return s.exists() ? toLink(s) : null;
 }
 
 /** Public (no login): reads a link only while it is pending and unexpired. */

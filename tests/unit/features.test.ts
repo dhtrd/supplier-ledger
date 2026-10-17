@@ -52,6 +52,7 @@ import {
 const entry = (p: Partial<Entry>): Entry => ({
   confirmNo: null,
   confirmBalance: null,
+  signLinkId: null,
   id: 'e',
   type: 'invoice',
   amount: 100,

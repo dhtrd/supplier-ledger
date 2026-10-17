@@ -12,7 +12,10 @@ import { Logo } from '../../../shared/ui/Logo';
 import { Money } from '../../../shared/ui/RiyalSign';
 import { expiresAtMs, getPublicLink, signLink, type SignLink } from '../data/signLinksRepo';
 import { SignaturePad, type SignaturePadHandle } from './SignaturePad';
-import { confirmLabel, letterParts } from '../../confirmations/domain/confirmation';
+import { confirmLabel, letterParts, signerSide } from '../../confirmations/domain/confirmation';
+import type { VarName } from '../../templates/domain/template';
+import { Body, tplStyle } from '../../templates/ui/parts';
+import { loadFont } from '../../templates/ui/fonts';
 
 const MAX_SIGNATURE_CHARS = 61_440;
 const TOKEN = /^[A-Za-z0-9_-]{22,64}$/;
@@ -58,7 +61,9 @@ export function SignPage() {
   const link = view.kind === 'ready' || view.kind === 'done' ? view.link : null;
   // A balance confirmation (إقرار مطابقة رصيد) instead of a payment voucher.
   const isConfirm = link?.confirmNo != null;
-  const docName = isConfirm ? 'إقرار مطابقة رصيد' : 'سند استلام دفعة';
+  // The supplier's own template (copied into the link): colour, font, title, text.
+  const tpl = link?.template ?? null;
+  const docName = tpl?.title ?? (isConfirm ? 'إقرار مطابقة رصيد' : 'سند استلام دفعة');
   // The server (rules) decides expiry: the page was readable, so the link was
   // live. The recipient's phone clock may be wrong, so it never blocks signing;
   // it only feeds the countdown text.
@@ -99,6 +104,7 @@ export function SignPage() {
         flexDirection: 'column',
         maxWidth: 560,
         margin: '0 auto',
+        ...(tpl ? { ...tplStyle(tpl), ['--ink' as string]: tpl.color } : {}),
       }}
     >
       <header
@@ -158,10 +164,15 @@ export function SignPage() {
           style={{ padding: '18px 20px 28px', display: 'flex', flexDirection: 'column', gap: 16 }}
         >
           <div className="row-between" style={{ alignItems: 'baseline' }}>
-            <h1 className="serif" style={{ margin: 0, fontSize: 26 }}>
-              {view.link.confirmNo != null
-                ? `إقرار مطابقة ${confirmLabel(view.link.confirmNo)}`
-                : `سند دفعة ${view.link.voucherNo}`}
+            <h1
+              className={tpl ? undefined : 'serif'}
+              style={{ margin: 0, fontSize: 26, color: tpl?.color }}
+            >
+              {tpl
+                ? `${tpl.title} ${view.link.confirmNo != null ? confirmLabel(view.link.confirmNo) : `#${view.link.voucherNo}`}`
+                : view.link.confirmNo != null
+                  ? `إقرار مطابقة ${confirmLabel(view.link.confirmNo)}`
+                  : `سند دفعة ${view.link.voucherNo}`}
             </h1>
             <span className="muted num" style={{ fontSize: 13 }}>
               {displayDate(view.link.date)}
@@ -182,7 +193,9 @@ export function SignPage() {
               gap: 8,
             }}
           >
-            {view.link.confirmNo != null ? (
+            {tpl ? (
+              <TemplateText link={view.link} />
+            ) : view.link.confirmNo != null ? (
               <ConfirmText link={view.link} />
             ) : (
               <>
@@ -258,6 +271,42 @@ export function SignPage() {
         </div>
       )}
     </div>
+  );
+}
+
+/** The text as the supplier's template words it, with the figures in bold. */
+function TemplateText({ link }: { link: SignLink }) {
+  const t = link.template!;
+  useEffect(() => {
+    loadFont(t.font).catch((e) => reportError('template-font', e));
+  }, [t.font]);
+  const isConfirm = link.confirmNo != null;
+  const b = link.confirmBalance ?? 0;
+  const values: Partial<Record<VarName, string>> = isConfirm
+    ? {
+        المورد: link.accountName,
+        الدافع: link.payerName,
+        التاريخ: displayDate(link.date),
+        الرصيد: `${formatAmount(Math.abs(b))} ر.س`,
+        التفقيط: link.amountWords,
+        الجهة: signerSide(b) ?? '(الحساب مسدَّد)',
+        الرقم: confirmLabel(link.confirmNo ?? 0),
+      }
+    : {
+        المورد: link.accountName,
+        الدافع: link.payerName,
+        التاريخ: displayDate(link.date),
+        المبلغ: `${formatAmount(link.amount)} ر.س`,
+        التفقيط: link.amountWords,
+        الرقم: String(link.voucherNo),
+      };
+  return (
+    <>
+      <div style={{ fontSize: 34, fontWeight: 800, color: t.color }} className="num">
+        {isConfirm ? `${formatAmount(Math.abs(b))} ر.س` : `${formatAmount(link.amount)} ر.س`}
+      </div>
+      <Body text={t.body} values={values} style={{ fontSize: 18, lineHeight: 2 }} />
+    </>
   );
 }
 

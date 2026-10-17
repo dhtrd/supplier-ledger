@@ -28,6 +28,11 @@ const UsersPage = lazy(() =>
 const SettingsPage = lazy(() =>
   import('../features/settings/ui/SettingsPage').then((m) => ({ default: m.SettingsPage })),
 );
+const TemplateEditorPage = lazy(() =>
+  import('../features/templates/ui/TemplateEditorPage').then((m) => ({
+    default: m.TemplateEditorPage,
+  })),
+);
 const AuditPage = lazy(() =>
   import('../features/settings/ui/AuditPage').then((m) => ({ default: m.AuditPage })),
 );
@@ -131,6 +136,7 @@ function SignedIn({ s }: { s: ReadySession }) {
             <Route path="/a/new" element={<AccountFormPage />} />
             <Route path="/a/:id" element={<StatementPage />} />
             <Route path="/a/:id/edit" element={<AccountFormPage />} />
+            <Route path="/a/:id/templates" element={<TemplateEditorPage />} />
             <Route path="/a/:id/entry/new" element={<EntryFormPage />} />
             <Route path="/a/:id/entry/:entryId" element={<EntryFormPage />} />
             <Route path="/users" element={<UsersPage />} />

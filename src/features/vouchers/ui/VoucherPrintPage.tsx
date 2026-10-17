@@ -12,6 +12,10 @@ import { buildStatement, fullRange } from '../../ledger/domain/statement';
 import { useLedger } from '../../ledger/ui/useLedger';
 import { isCashPayment } from '../../ledger/domain/types';
 import { ConfirmationPrint } from '../../confirmations/ui/ConfirmationPrint';
+import { ConfirmTemplate } from '../../templates/ui/ConfirmTemplate';
+import { VoucherTemplate } from '../../templates/ui/VoucherTemplate';
+import { confirmDoc, voucherDoc } from '../../templates/ui/docModel';
+import { useDocTemplate } from '../../templates/ui/useDocTemplate';
 import { can } from '../../users/domain/types';
 import './print.css';
 
@@ -41,14 +45,56 @@ export function VoucherPrintPage() {
     [entries],
   );
 
+  const row = statement.rows.find((r) => r.entry.id === entryId);
+  const found = row?.entry;
+  // The supplier's template (or, once signed, the one it was signed with).
+  const tpl = useDocTemplate(
+    accountId,
+    found?.type === 'confirm' ? 'confirm' : 'voucher',
+    found?.signature ? found.signLinkId : null,
+    !!found,
+  );
+
   if (ledger.error) return <ErrorBox message={ledger.error} />;
   if (ledger.account === undefined || ledger.entries === undefined) return <Loading />;
   const account = ledger.account;
-  const row = statement.rows.find((r) => r.entry.id === entryId);
+  if (row && tpl.template === undefined) return <Loading />;
+  const showBal = can.seeBalances(profile.role);
+  if (account && row && tpl.template) {
+    const t = tpl.template;
+    const sheet =
+      row.entry.type === 'confirm' ? (
+        <ConfirmTemplate t={t} doc={confirmDoc(account, row.entry, settings.payerName)} />
+      ) : isCashPayment(row.entry) ? (
+        <VoucherTemplate
+          t={t}
+          doc={voucherDoc(
+            account,
+            row.entry,
+            settings.payerName,
+            showBal
+              ? `${formatAmount(Math.abs(row.balance))} ${SIDE_LABEL[balanceSide(row.balance)]}`
+              : null,
+          )}
+        />
+      ) : null;
+    if (sheet)
+      return (
+        <>
+          <PrintToolbar back={`/a/${accountId}`} />
+          <div className="print-stage">{sheet}</div>
+        </>
+      );
+  }
   if (account && row?.entry.type === 'confirm')
     return (
       <>
         <PrintToolbar back={`/a/${accountId}`} />
+        {tpl.error && (
+          <div className="banner banner-warn no-print" role="alert">
+            تعذّر تحميل نموذج المورد ({tpl.error})؛ يظهر النموذج الافتراضي.
+          </div>
+        )}
         <div className="print-stage">
           <ConfirmationPrint account={account} entry={row.entry} payerName={settings.payerName} />
         </div>
