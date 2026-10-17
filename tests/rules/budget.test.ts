@@ -24,6 +24,8 @@ import {
   syncSignedLink,
   toLink,
 } from '../../src/features/signing/data/signLinksRepo';
+import { getRawTemplate, saveTemplate } from '../../src/features/templates/data/templatesRepo';
+import { defaultTemplate, DOC_KINDS } from '../../src/features/templates/domain/template';
 
 let env: RulesTestEnvironment;
 const PNG =
@@ -186,6 +188,65 @@ for (const uid of ['owner', 'entry']) {
     });
   });
 }
+
+describe('templated documents stay within budget', () => {
+  it('entry user sends, signs and syncs a voucher and a confirmation with templates', async () => {
+    for (const k of DOC_KINDS)
+      await saveTemplate(
+        as('owner'),
+        'owner',
+        ACC_A,
+        k,
+        defaultTemplate(k, k === 'statement' ? 'formal' : k === 'confirm' ? 'c15' : 'v15'),
+      );
+    const db = as('entry');
+    const [acc] = await getAccounts(db, [ACC_A]);
+    const pay = (await getEntry(db, ACC_A, 'pay1'))!;
+    const token = await assertSucceeds(
+      createSignLink(db, 'entry', {
+        account: acc!,
+        entry: pay.entry,
+        payerName: 'شركة الضبيبي',
+        ttlMinutes: 60,
+        pendingForEntry: [],
+        template: await getRawTemplate(db, ACC_A, 'voucher'),
+      }),
+    );
+    await signLink(anon(), token, 'عبد المجيد', PNG);
+    await assertSucceeds(
+      syncSignedLink(db, 'entry', toLink(await getDoc(doc(db, 'signLinks', token)))),
+    );
+    const { id } = await createEntry(
+      db,
+      'entry',
+      ACC_A,
+      {
+        type: 'confirm',
+        amount: 0,
+        signed: 0,
+        date: '2026-09-30',
+        details: '',
+        confirmBalance: 50000,
+      },
+      [],
+    );
+    const e = (await getEntry(db, ACC_A, id))!;
+    const t2 = await assertSucceeds(
+      createSignLink(db, 'entry', {
+        account: acc!,
+        entry: e.entry,
+        payerName: 'شركة الضبيبي',
+        ttlMinutes: 60,
+        pendingForEntry: [],
+        template: await getRawTemplate(db, ACC_A, 'confirm'),
+      }),
+    );
+    await signLink(anon(), t2, 'محمد', PNG);
+    await assertSucceeds(
+      syncSignedLink(db, 'entry', toLink(await getDoc(doc(db, 'signLinks', t2)))),
+    );
+  });
+});
 
 describe('manager-only heavy writes stay within budget', () => {
   it('restore from the trash and archive', async () => {

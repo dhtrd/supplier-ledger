@@ -776,6 +776,43 @@ service cloud.firestore {
       }
     }
 
+    // ---------- per-supplier document templates (owner decision 2026-10-17) --
+    // One doc per account: { statement?, confirm?, voucher? }. Managers set
+    // them; whoever may open the account reads them. Texts are plain text
+    // (the app never renders them as HTML).
+    match /templates/{accountId} {
+      function validT(t, kind) {
+        return t is map
+          && t.keys().hasOnly(['layout', 'color', 'font', 'title', 'sub', 'foot', 'sides',
+                               'columns', 'colTitles', 'body'])
+          && t.layout is string && t.layout.matches('^[a-z0-9]{1,12}$')
+          && t.color is string && t.color.matches('^#[0-9a-f]{6}$')
+          && t.font in ['plex', 'naskh', 'amiri', 'tajawal', 'cairo']
+          && hasText(t.title, 60)
+          && shortText(t.sub, 120)
+          && shortText(t.foot, 120)
+          && t.sides in ['lah', 'dc']
+          && t.columns is list && t.columns.size() <= 7
+          && t.colTitles is map && t.colTitles.size() <= 7
+          && shortText(t.body, 800)
+          // A confirmation must state the balance, its date and the side.
+          && (kind != 'confirm'
+              || (t.body.matches('(?s).*[{]الرصيد[}].*')
+                  && t.body.matches('(?s).*[{]التاريخ[}].*')
+                  && t.body.matches('(?s).*[{]الجهة[}].*')));
+      }
+      function ok(d, kind) { return !(kind in d) || validT(d[kind], kind); }
+      allow get: if canAccess(accountId);
+      allow create, update: if request.resource.data.keys().hasOnly(['statement', 'confirm', 'voucher',
+                                                                    'updatedAt', 'updatedBy'])
+        && ok(request.resource.data, 'statement')
+        && ok(request.resource.data, 'confirm')
+        && ok(request.resource.data, 'voucher')
+        && touched(request.resource.data)
+        && isManager();
+      allow delete: if false;
+    }
+
     // ---------- signing links ------------------------------------------------
     // The token (document id) is a 128-bit random value. A link is readable and
     // signable without login only while pending and before expiry (server
@@ -791,6 +828,16 @@ service cloud.firestore {
       function entryAt(d) {
         return get(/databases/$(database)/documents/accounts/$(d.accountId)/entries/$(d.entryId)).data;
       }
+      // The supplier's template for this document, copied into the link, so
+      // the signer sees it and the signed document is printed exactly so.
+      // A link without a template shows the default document. One get() only:
+      // a single write may make at most 10 document calls, and the role checks
+      // already use 9 for a user with lockouts + screenLocks docs (2026-10-17).
+      function tplPath(d) { return /databases/$(database)/documents/templates/$(d.accountId); }
+      function tplOk(d) {
+        return d.get('template', null) == null
+          || d.template == get(tplPath(d)).data.get(entryAt(d).type == 'confirm' ? 'confirm' : 'voucher', null);
+      }
 
       allow get: if live() || (isActive() && canAccess(resource.data.accountId));
       allow list: if isActive() && canAccess(resource.data.accountId);
@@ -800,7 +847,7 @@ service cloud.firestore {
         && canAccess(request.resource.data.accountId)
         && request.resource.data.keys().hasOnly(['accountId', 'entryId', 'accountName', 'accountPhone', 'logo',
                                                  'payerName', 'amount', 'amountWords', 'date', 'details',
-                                                 'voucherNo', 'confirmNo', 'confirmBalance',
+                                                 'voucherNo', 'confirmNo', 'confirmBalance', 'template',
                                                  'ttlMinutes', 'status', 'synced',
                                                  'createdAt', 'createdBy'])
         && request.resource.data.status == 'pending'
@@ -820,6 +867,7 @@ service cloud.firestore {
         && request.resource.data.accountName == accountAt(request.resource.data).name
         && request.resource.data.accountPhone == accountAt(request.resource.data).phone
         && request.resource.data.get('logo', null) == accountAt(request.resource.data).get('logo', null)
+        && tplOk(request.resource.data)
         && shortText(request.resource.data.amountWords, 300)
         && shortText(request.resource.data.details, 500)
         && (!('logo' in request.resource.data) || request.resource.data.logo == null

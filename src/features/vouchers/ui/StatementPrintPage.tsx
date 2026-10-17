@@ -13,6 +13,9 @@ import { can } from '../../users/domain/types';
 import { confirmLabel, confirmSummary } from '../../confirmations/domain/confirmation';
 import { useLedger } from '../../ledger/ui/useLedger';
 import { PrintToolbar } from './VoucherPrintPage';
+import { StatementTemplate } from '../../templates/ui/StatementTemplate';
+import { statementDoc } from '../../templates/ui/docModel';
+import { useDocTemplate } from '../../templates/ui/useDocTemplate';
 import './print.css';
 
 /** Statement for print / «Save as PDF»: oldest first with the opening balance (owner's rule for exports). */
@@ -33,10 +36,26 @@ export function StatementPrintPage() {
     return buildStatement(entries, range);
   }, [entries, from, to]);
 
+  const tpl = useDocTemplate(accountId, 'statement', null, true);
+
   if (ledger.error) return <ErrorBox message={ledger.error} />;
-  if (ledger.account === undefined || ledger.entries === undefined) return <Loading />;
+  if (ledger.account === undefined || ledger.entries === undefined || tpl.template === undefined)
+    return <Loading />;
   const account = ledger.account;
   if (!account) return <ErrorBox message="الحساب غير موجود." />;
+  const back = `/a/${accountId}?from=${statement.range.from}&to=${statement.range.to}`;
+  if (tpl.template)
+    return (
+      <>
+        <PrintToolbar back={back} />
+        <div className="print-stage">
+          <StatementTemplate
+            t={tpl.template}
+            doc={statementDoc(account, statement, tpl.template, showBalances)}
+          />
+        </div>
+      </>
+    );
   const side = (h: number) => SIDE_LABEL[balanceSide(h)];
 
   return (

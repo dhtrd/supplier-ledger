@@ -1,0 +1,238 @@
+/* Template editor «أ»: settings + live preview (tabs on a phone). */
+.te {
+  padding-bottom: 96px;
+}
+.te-kinds {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 12px var(--gutter) 4px;
+}
+.te-kinds button {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-height: 56px;
+  padding: 6px 14px;
+  border: 1.5px solid var(--rule-strong);
+  border-radius: var(--radius-lg);
+  background: var(--sheet);
+  font-weight: 600;
+  font-size: 15px;
+}
+.te-kinds button[aria-selected='true'] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+.te-kind-state {
+  font-size: 11.5px;
+  font-weight: 400;
+  opacity: 0.8;
+}
+.te-panes {
+  margin: 10px var(--gutter) 0;
+}
+.te-settings {
+  gap: 14px;
+}
+
+/* Structures: live thumbnails of the real layouts. */
+.te-layouts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 10px;
+}
+.te-layout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1.5px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--white);
+  font-size: 12.5px;
+  line-height: 1.4;
+  text-align: center;
+}
+.te-layout[aria-checked='true'] {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 2px var(--ink);
+}
+.te-thumb {
+  display: block;
+  width: 100px;
+  height: 141px;
+  overflow: hidden;
+  pointer-events: none;
+  border: 1px solid var(--rule);
+}
+.te-thumb-zoom {
+  display: block;
+  zoom: 0.126;
+}
+.te-thumb-zoom .a4,
+.te-zoom .a4 {
+  box-shadow: none;
+  /* The editor sets the zoom itself (print.css zooms .a4 on phones). */
+  zoom: 1;
+}
+.te-layout-name {
+  font-weight: 600;
+}
+
+.te-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.te-swatch {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 3px solid var(--white);
+  box-shadow: 0 0 0 1.5px var(--rule-strong);
+  padding: 0;
+}
+.te-swatch[aria-checked='true'] {
+  box-shadow: 0 0 0 3px var(--ink);
+}
+.te-custom {
+  position: relative;
+  overflow: hidden;
+  background: conic-gradient(#c33, #cc3, #3c3, #3cc, #33c, #c3c, #c33);
+  cursor: pointer;
+}
+.te-custom input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+.te-fonts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px;
+}
+.te-fonts button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 60px;
+  padding: 6px;
+  border: 1.5px solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--sheet);
+  font-size: 16px;
+}
+.te-fonts button[aria-checked='true'] {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 2px var(--ink);
+}
+.te-font-sample {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.te-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.te-chip {
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1.5px solid var(--rule-strong);
+  background: var(--sheet);
+  font-size: 14px;
+}
+.te-chip.req {
+  border-color: var(--conf);
+  color: var(--conf);
+  font-weight: 600;
+}
+
+.te-cols {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.te-cols li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) repeat(3, 44px);
+  align-items: center;
+  gap: 4px;
+}
+.te-col-no {
+  text-align: center;
+  color: var(--muted);
+}
+.te-cols .icon-btn:disabled {
+  opacity: 0.3;
+}
+
+.te-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.te-preview-note {
+  font-size: 13px;
+}
+.te-zoom {
+  width: max-content;
+}
+.te-zoom .a4 {
+  border: 1px solid var(--rule);
+}
+.te-empty {
+  padding: 40px 16px;
+  text-align: center;
+  border: 1.5px dashed var(--rule-strong);
+  border-radius: var(--radius-lg);
+  color: var(--muted);
+}
+
+@media (min-width: 900px) {
+  .te {
+    padding-bottom: 0;
+  }
+  .te-kinds {
+    max-width: 1320px;
+    margin: 0 auto;
+    padding-inline: var(--gutter);
+  }
+  .te-kinds button {
+    flex: 0 0 auto;
+    min-width: 170px;
+  }
+  .te-grid {
+    display: grid;
+    grid-template-columns: minmax(360px, 420px) minmax(0, 1fr);
+    gap: 24px;
+    max-width: 1320px;
+    margin: 0 auto;
+    padding: 12px var(--gutter) 0;
+    align-items: start;
+  }
+  .te-preview-col {
+    position: sticky;
+    top: 12px;
+    max-height: calc(100dvh - 24px);
+    overflow: auto;
+  }
+}
+.te .desk-actions {
+  flex-wrap: nowrap;
+}

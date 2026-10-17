@@ -69,6 +69,7 @@ export function toEntry(s: DocumentSnapshot): EntrySnapshot {
       attachments: strList(raw.attachments),
       voucherNo: typeof raw.voucherNo === 'number' ? raw.voucherNo : null,
       signature,
+      signLinkId: typeof raw.signLinkId === 'string' ? raw.signLinkId : null,
       createdBy: str(raw.createdBy),
       legacy: typeof raw.legacyId === 'number',
       subtype: raw.subtype === 'return' || raw.subtype === 'discount' ? raw.subtype : null,

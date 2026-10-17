@@ -27,6 +27,7 @@ import { accountBalance, buildStatement, fullRange } from '../domain/statement';
 import { entryLabel, isSignable, SUBTYPE_LABEL, type Entry } from '../domain/types';
 import { confirmLabel, confirmStatus } from '../../confirmations/domain/confirmation';
 import { downloadStatementXlsx } from '../export/statementSheet';
+import { getTemplates } from '../../templates/data/templatesRepo';
 import { EntrySheet } from './EntrySheet';
 import { signStateOf } from './signState';
 import { useLedger } from './useLedger';
@@ -102,7 +103,8 @@ export function StatementPage() {
   const exportXlsx = async () => {
     setExporting(true);
     try {
-      await downloadStatementXlsx(account.name, statement, { balances: showBalances });
+      const template = (await getTemplates(fb().db, account.id)).statement ?? null;
+      await downloadStatementXlsx(account.name, statement, { balances: showBalances, template });
       toast.info(
         showBalances
           ? 'صُدِّر الكشف إلى Excel (الأقدم أولاً مع الرصيد الافتتاحي).'
@@ -234,6 +236,15 @@ export function StatementPage() {
               style={{ fontSize: 14, display: 'inline-flex', alignItems: 'center' }}
             >
               تعديل الحساب
+            </Link>
+          )}
+          {can.manageAccounts(profile.role) && (
+            <Link
+              to={`/a/${id}/templates`}
+              className="btn-link"
+              style={{ fontSize: 14, display: 'inline-flex', alignItems: 'center' }}
+            >
+              النماذج
             </Link>
           )}
           {can.archiveAccounts(profile.role) && !account.archived && (

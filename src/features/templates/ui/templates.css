@@ -1,0 +1,563 @@
+/*
+ * Per-supplier document templates (approved gallery 2026-10-17).
+ * Every layout draws inside `.a4.tp` with --c (main colour) and --c2 (tint).
+ * Sizes are for an A4 sheet; the screen preview zooms the same sheet.
+ */
+.a4.tp {
+  --tp-y: 14mm;
+  --tp-x: 16mm;
+  position: relative;
+  overflow: hidden;
+  padding: var(--tp-y) var(--tp-x);
+  gap: 5mm;
+  font-size: 14px;
+  line-height: 1.75;
+  color: #1b2a3a;
+}
+@media print {
+  .a4.tp {
+    padding: var(--tp-y) var(--tp-x);
+  }
+}
+.tp b {
+  font-weight: 700;
+}
+.tp .num,
+.tp-amt {
+  font-variant-numeric: tabular-nums;
+}
+.tp-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.tp-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.tp-center {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.tp-muted {
+  color: #6b6559;
+}
+.tp-small {
+  font-size: 11px;
+}
+.tp-name {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.tp-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--c);
+  line-height: 1.35;
+}
+.tp-title.light {
+  color: #fff;
+}
+.tp-big {
+  font-size: 28px;
+}
+.tp-huge-title {
+  font-size: 40px;
+  letter-spacing: 1px;
+}
+.tp-light-title {
+  font-size: 34px;
+  font-weight: 300;
+  margin-top: 40px;
+}
+.tp-under {
+  border-bottom: 4px solid var(--c);
+  padding-bottom: 4px;
+}
+.tp-boxed {
+  border: 2px solid var(--c);
+  padding: 2px 22px;
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--c);
+}
+.tp-rule {
+  border-bottom: 3px solid var(--c);
+  padding-bottom: 10px;
+}
+.tp-rule.dark {
+  border-bottom: 1.5px solid #1b2a3a;
+}
+.tp-rule.double {
+  border-bottom: 5px double var(--c);
+}
+.tp-hr {
+  height: 1.5px;
+  width: 50%;
+  background: var(--c);
+  margin: 0 auto;
+}
+.tp-hr.thin {
+  width: 100%;
+  background: #ddd;
+}
+.tp-orn {
+  color: var(--c);
+  letter-spacing: 6px;
+  font-size: 18px;
+}
+.tp-mark {
+  border-radius: 12px;
+  background: var(--c);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  flex: none;
+}
+.tp-mark.light {
+  background: #fff;
+  color: var(--c);
+}
+.tp-body {
+  margin: 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.tp-letter {
+  font-size: 18px;
+  line-height: 2.1;
+}
+.tp-amt {
+  font-weight: 800;
+}
+.tp-xl {
+  font-size: 30px;
+  line-height: 1.3;
+}
+.tp-huge {
+  font-size: 56px;
+  line-height: 1.2;
+  color: var(--c);
+}
+.tp-huge.light {
+  font-weight: 300;
+  color: #1b2a3a;
+}
+.tp-huge small {
+  font-size: 18px;
+}
+.tp-box {
+  border: 1.5px solid var(--c);
+  border-radius: 12px;
+  padding: 12px 16px;
+}
+.tp-tint {
+  background: var(--c2);
+  border-radius: 12px;
+  padding: 12px 16px;
+}
+.tp-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30%;
+  gap: 18px;
+}
+.tp-split.wide {
+  grid-template-columns: minmax(0, 1fr) 34%;
+}
+.tp-side {
+  border-inline-start: 1px solid #ddd;
+  padding-inline-start: 14px;
+  display: flex;
+  flex-direction: column;
+}
+.tp-sign {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 46%;
+  min-width: 200px;
+}
+.tp-sign-box {
+  height: 110px;
+  border: 1px solid #bbb;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #fff;
+}
+.tp-sign-box.big {
+  height: 180px;
+  border: 2px dashed var(--c);
+}
+.tp-sign-box img {
+  max-height: 100%;
+  max-width: 100%;
+}
+.tp-foot {
+  margin-top: auto;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #777;
+  font-size: 11px;
+  border-top: 1px solid #e4e0d6;
+  padding-top: 6px;
+}
+.tp-sign + .tp-foot,
+.tp-seal + .tp-foot {
+  margin-top: 8px;
+}
+/* bands, panels, frames */
+.tp-band {
+  margin: calc(-1 * var(--tp-y)) calc(-1 * var(--tp-x)) 0;
+  padding: 12mm var(--tp-x) 16mm;
+  background: var(--c);
+  color: #fff;
+  align-items: flex-end;
+}
+.tp-float {
+  margin-top: -14mm;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.14);
+  padding: 14px;
+  position: relative;
+}
+.tp-kpis {
+  margin-top: -12mm;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  position: relative;
+}
+.tp-kpis > div {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 10px 14px;
+}
+.tp-kpis b {
+  display: block;
+  font-size: 22px;
+  color: var(--c);
+}
+.tp-bottom {
+  margin: 8px calc(-1 * var(--tp-x)) calc(-1 * var(--tp-y));
+  padding: 8px var(--tp-x);
+  background: var(--c);
+  color: #fff;
+}
+.tp-panel-wrap {
+  display: flex;
+  gap: 18px;
+  flex: 1;
+  margin: calc(-1 * var(--tp-y)) calc(-1 * var(--tp-x)) calc(-1 * var(--tp-y)) 0;
+}
+.tp-panel-wrap.left {
+  flex-direction: row-reverse;
+  margin: calc(-1 * var(--tp-y)) 0 calc(-1 * var(--tp-y)) calc(-1 * var(--tp-x));
+}
+.tp-panel-wrap > .tp-col {
+  padding: var(--tp-y) 0;
+}
+.tp-panel {
+  width: 30%;
+  background: var(--c);
+  color: #fff;
+  padding: var(--tp-y) 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tp-frame {
+  position: absolute;
+  inset: 8mm;
+  pointer-events: none;
+  border: 1.5px solid var(--c);
+}
+.tp-frame.double {
+  border: 6px double var(--c);
+}
+.tp-frame.thin {
+  inset: 7mm;
+}
+.tp-frame.thick {
+  inset: 10mm;
+  border: 6px solid var(--c);
+  border-radius: 8px;
+}
+.tp-pad {
+  padding: 0 8mm;
+}
+.tp-seal {
+  position: absolute;
+  bottom: 16%;
+  left: 12%;
+  width: 120px;
+  height: 120px;
+  border: 3px solid var(--c);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: var(--c);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 10px;
+  transform: rotate(-12deg);
+  opacity: 0.75;
+}
+.tp-watermark {
+  position: absolute;
+  inset: 30% 0 auto;
+  text-align: center;
+  font-size: 160px;
+  font-weight: 900;
+  color: var(--c);
+  opacity: 0.07;
+  pointer-events: none;
+}
+.tp-ribbon {
+  position: absolute;
+  top: 26px;
+  left: -46px;
+  transform: rotate(-45deg);
+  background: var(--c);
+  color: #fff;
+  padding: 4px 60px;
+  font-weight: 700;
+}
+.tp-card {
+  margin: auto 0;
+  border-radius: 16px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.14);
+  border-top: 8px solid var(--c);
+  padding: 24px;
+}
+/* receipt / cheque / copies */
+.tp-receipt {
+  border: 2.5px dashed var(--c);
+  border-radius: 18px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28%;
+  min-height: 115mm;
+  overflow: hidden;
+}
+.tp-receipt-main {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tp-stub {
+  background: var(--c);
+  color: #fff;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  text-align: center;
+}
+.tp-line {
+  border-bottom: 1px dotted #888;
+  padding-bottom: 3px;
+}
+.tp-cut {
+  text-align: center;
+  color: #999;
+  border-top: 1.5px dashed #aaa;
+  padding-top: 4px;
+  font-size: 11px;
+}
+.tp-cheque {
+  border: 1.5px solid #333;
+  border-radius: 6px;
+  padding: 16px;
+  background: linear-gradient(135deg, var(--c2), #fff);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tp-amtbox {
+  border: 2px solid #333;
+  padding: 2px 14px;
+  font-weight: 700;
+}
+.tp-copy {
+  border: 1.5px solid var(--c);
+  border-radius: 10px;
+  padding: 14px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tp-copy + .tp-copy {
+  border-style: dashed;
+}
+.tp-digits {
+  display: flex;
+  gap: 4px;
+  direction: ltr;
+}
+.tp-digits span {
+  border: 1.5px solid #333;
+  width: 28px;
+  text-align: center;
+  font-weight: 700;
+}
+.tp-cells {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.tp-cells.one {
+  grid-template-columns: 1fr;
+}
+.tp-cells > div {
+  border: 1px solid #999;
+  padding: 8px 10px;
+}
+/* tables */
+.tp-fields {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid #999;
+}
+.tp-fields th,
+.tp-fields td {
+  border: 1px solid #ccc;
+  padding: 8px 10px;
+  text-align: right;
+  vertical-align: top;
+}
+.tp-fields th {
+  background: var(--c2);
+  width: 32%;
+  font-weight: 700;
+  color: #1b2a3a;
+}
+.tp-memo {
+  border-collapse: collapse;
+  width: 100%;
+}
+.tp-memo th {
+  color: var(--c);
+  text-align: right;
+  width: 18%;
+  padding: 6px 0;
+}
+.tp-memo td {
+  border-bottom: 1px dotted #aaa;
+}
+.a4.tp .tp-table {
+  font-size: 13px;
+}
+.a4.tp .tp-table th {
+  font-size: 12.5px;
+  color: #1b2a3a;
+}
+.tp-table.head-fill th {
+  background: var(--c);
+  color: #fff;
+  border-bottom: 0;
+}
+.tp-table.head-line th {
+  color: var(--c);
+  border-bottom: 2.5px solid var(--c);
+}
+.tp-table.zebra tbody tr:nth-child(odd) td {
+  background: var(--c2);
+}
+.tp-table.dotted td {
+  border-bottom: 1px dotted #bbb;
+}
+.tp-table.boxed th,
+.tp-table.boxed td {
+  border: 1px solid #ccc;
+}
+.tp-table.boxed th {
+  color: var(--c);
+  border-color: var(--c);
+}
+.tp-open td {
+  font-style: italic;
+  background: #f6f3ec;
+}
+.tp-total td {
+  font-weight: 700;
+  border-top: 2px solid var(--c);
+}
+.tp-closing {
+  text-align: left;
+  font-size: 18px;
+  font-weight: 700;
+}
+.tp-closing.boxed {
+  text-align: center;
+  border: 3px double var(--c);
+  padding: 10px;
+}
+.tp-t {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 4px solid var(--c);
+}
+.tp-t > div:first-child {
+  border-inline-end: 4px solid var(--c);
+}
+.tp-t-head {
+  margin: 0;
+  text-align: center;
+  padding: 6px;
+  background: var(--c2);
+  color: var(--c);
+  font-size: 16px;
+}
+.tp-timeline {
+  border-inline-start: 4px solid var(--c);
+  padding-inline-start: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tp-tl-card {
+  border: 1px solid #e4e0d6;
+  border-radius: 12px;
+  padding: 8px 14px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  position: relative;
+  break-inside: avoid;
+}
+.tp-tl-card::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: -27px;
+  top: 16px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--c);
+}
+.tp-lah {
+  color: var(--c);
+  display: block;
+}
+.tp-alayh {
+  color: #a4452a;
+  display: block;
+}

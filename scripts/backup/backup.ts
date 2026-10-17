@@ -47,6 +47,7 @@ const COLLECTIONS = [
   'lockouts',
   'backupRequests',
   'notifications',
+  'templates',
 ];
 const RETENTION_DAYS = 30;
 /** Notifications are kept 90 days (approved spec); older ones are in the backups. */

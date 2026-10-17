@@ -20,6 +20,8 @@ export interface Entry extends StatementInput {
   attachments: string[];
   voucherNo: number | null;
   signature: Signature | null;
+  /** The link the signature came from (its copy of the template is what was signed). */
+  signLinkId: string | null;
   createdBy: string;
   /** Migrated from the old «دفتر الحسابات» app (or an imported statement). */
   legacy: boolean;

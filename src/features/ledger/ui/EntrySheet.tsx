@@ -32,6 +32,7 @@ import {
   signerSide,
 } from '../../confirmations/domain/confirmation';
 import type { SignState } from './signState';
+import { getRawTemplate } from '../../templates/data/templatesRepo';
 
 export function EntrySheet({
   account,
@@ -94,12 +95,19 @@ export function EntrySheet({
           );
       } else if (e.voucherNo === null) throw new AppError('لا يوجد رقم سند لهذه الدفعة.');
       const pending = links.filter((l) => l.entryId === e.id && l.status === 'pending');
+      // The supplier's own template goes with the link (what the signer sees and signs).
+      const template = await getRawTemplate(
+        fb().db,
+        account.id,
+        e.type === 'confirm' ? 'confirm' : 'voucher',
+      );
       const token = await createSignLink(fb().db, user.uid, {
         account,
         entry: e,
         payerName: settings.payerName,
         ttlMinutes: settings.linkMinutes,
         pendingForEntry: pending,
+        template,
       });
       const url = linkUrl(token, `${window.location.origin}${window.location.pathname}`);
       const text =
