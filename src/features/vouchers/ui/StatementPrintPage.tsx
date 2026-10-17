@@ -36,7 +36,7 @@ export function StatementPrintPage() {
     return buildStatement(entries, range);
   }, [entries, from, to]);
 
-  const tpl = useDocTemplate(accountId, 'statement', null, true);
+  const tpl = useDocTemplate(accountId, 'statement', true);
 
   if (ledger.error) return <ErrorBox message={ledger.error} />;
   if (ledger.account === undefined || ledger.entries === undefined || tpl.template === undefined)

@@ -47,13 +47,8 @@ export function VoucherPrintPage() {
 
   const row = statement.rows.find((r) => r.entry.id === entryId);
   const found = row?.entry;
-  // The supplier's template (or, once signed, the one it was signed with).
-  const tpl = useDocTemplate(
-    accountId,
-    found?.type === 'confirm' ? 'confirm' : 'voucher',
-    found?.signature ? found.signLinkId : null,
-    !!found,
-  );
+  // The supplier's current template, signed documents included.
+  const tpl = useDocTemplate(accountId, found?.type === 'confirm' ? 'confirm' : 'voucher', !!found);
 
   if (ledger.error) return <ErrorBox message={ledger.error} />;
   if (ledger.account === undefined || ledger.entries === undefined) return <Loading />;
